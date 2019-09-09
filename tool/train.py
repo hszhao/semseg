@@ -85,12 +85,13 @@ def main():
     check(args)
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.train_gpu)
     if args.manual_seed is not None:
+    	random.seed(args.manual_seed)
+    	np.random.seed(args.manual_seed)
+    	torch.manual_seed(manualSeed)
+    	torch.cuda.manual_seed(manualSeed)
+    	torch.cuda.manual_seed_all(manualSeed)
         cudnn.benchmark = False
         cudnn.deterministic = True
-        torch.manual_seed(args.manual_seed)
-        np.random.seed(args.manual_seed)
-        torch.manual_seed(args.manual_seed)
-        torch.cuda.manual_seed_all(args.manual_seed)
     if args.dist_url == "env://" and args.world_size == -1:
         args.world_size = int(os.environ["WORLD_SIZE"])
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed

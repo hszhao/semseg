@@ -43,7 +43,7 @@ def intersectionAndUnion(output, target, K, ignore_index=255):
     assert output.shape == target.shape
     output = output.reshape(output.size).copy()
     target = target.reshape(target.size)
-    output[np.where(target == ignore_index)[0]] = 255
+    output[np.where(target == ignore_index)[0]] = ignore_index
     intersection = output[np.where(output == target)[0]]
     area_intersection, _ = np.histogram(intersection, bins=np.arange(K+1))
     area_output, _ = np.histogram(output, bins=np.arange(K+1))

@@ -10,8 +10,6 @@ import torch.nn.functional as F
 import torch.nn.parallel
 import torch.utils.data
 
-from model.pspnet import PSPNet
-from model.psanet import PSANet
 from util import config
 from util.util import colorize
 
@@ -85,8 +83,10 @@ def main():
     colors = np.loadtxt(args.colors_path).astype('uint8')
 
     if args.arch == 'psp':
+        from model.pspnet import PSPNet
         model = PSPNet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, pretrained=False)
     elif args.arch == 'psa':
+        from model.psanet import PSANet
         model = PSANet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, compact=args.compact,
                        shrink_factor=args.shrink_factor, mask_h=args.mask_h, mask_w=args.mask_w,
                        normalization_factor=args.normalization_factor, psa_softmax=args.psa_softmax,
