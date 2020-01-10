@@ -11,6 +11,6 @@ mkdir -p ${result_dir}
 cp tool/test.sh tool/test.py ${config} ${exp_dir}
 
 export PYTHONPATH=./
-$PYTHON -u tool/test.py \
+$PYTHON -u ${exp_dir}/test.py \
   --config=${config} \
   2>&1 | tee ${result_dir}/test-$now.log
