@@ -1,7 +1,7 @@
 DATA:
-  data_root: /mnt/lustre/zhaohengshuang/dataset/voc2012
-  train_list: /mnt/lustre/zhaohengshuang/dataset/voc2012/list/train_aug.txt
-  val_list: /mnt/lustre/zhaohengshuang/dataset/voc2012/list/val.txt
+  data_root: dataset/voc2012
+  train_list: dataset/voc2012/list/train_aug.txt
+  val_list: dataset/voc2012/list/val.txt
   classes: 21
 
 TRAIN:
@@ -53,7 +53,7 @@ Distributed:
   loss_scale:
 
 TEST:
-  test_list: /mnt/lustre/zhaohengshuang/dataset/voc2012/list/val.txt
+  test_list: dataset/voc2012/list/val.txt
   split: val  # split in [train, val and test]
   base_size: 512  # based size for scaling
   test_h: 465
@@ -65,5 +65,5 @@ TEST:
   test_gpu: [0]
   model_path: exp/voc2012/psanet101/model/train_epoch_50.pth  # evaluation model path
   save_folder: exp/voc2012/psanet101/result/epoch_50/val/ss  # results save folder
-  colors_path: dataset/voc2012/voc2012_colors.txt  # path of dataset colors
-  names_path: dataset/voc2012/voc2012_names.txt  # path of dataset category names
+  colors_path: data/voc2012/voc2012_colors.txt  # path of dataset colors
+  names_path: data/voc2012/voc2012_names.txt  # path of dataset category names

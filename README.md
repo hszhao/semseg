@@ -27,7 +27,15 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
 
 4. Train:
 
-   - Download related datasets and modify the relevant paths specified in folder `config`, and download ImageNet pre-trained [models]((https://drive.google.com/open?id=15wx9vOM0euyizq-M1uINgN0_wjVRf9J3)) and put them under folder `initmodel` for weight initialization. Remember to use the right dataset format detailed in [FAQ.md](./FAQ.md).
+   - Download related datasets and symlink the paths to them as follows (you can alternatively modify the relevant paths specified in folder `config`):
+
+     ```
+     cd semseg
+     mkdir -p dataset
+     ln -s /path_to_ade20k_dataset dataset/ade20k
+     ```
+
+   - Download ImageNet pre-trained [models]((https://drive.google.com/open?id=15wx9vOM0euyizq-M1uINgN0_wjVRf9J3)) and put them under folder `initmodel` for weight initialization. Remember to use the right dataset format detailed in [FAQ.md](./FAQ.md).
 
    - Specify the gpu used in config then do training:
 

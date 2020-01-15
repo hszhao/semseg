@@ -1,7 +1,7 @@
 DATA:
-  data_root: /mnt/lustre/zhaohengshuang/dataset/cityscapes
-  train_list: /mnt/lustre/zhaohengshuang/dataset/cityscapes/list/fine_train.txt
-  val_list: /mnt/lustre/zhaohengshuang/dataset/cityscapes/list/fine_val.txt
+  data_root: dataset/cityscapes
+  train_list: dataset/cityscapes/list/fine_train.txt
+  val_list: dataset/cityscapes/list/fine_val.txt
   classes: 19
 
 TRAIN:
@@ -53,7 +53,7 @@ Distributed:
   loss_scale:
 
 TEST:
-  test_list: /mnt/lustre/zhaohengshuang/dataset/cityscapes/list/fine_val.txt
+  test_list: dataset/cityscapes/list/fine_val.txt
   split: val  # split in [train, val and test]
   base_size: 2048  # based size for scaling
   test_h: 705
@@ -65,5 +65,5 @@ TEST:
   test_gpu: [0]
   model_path: exp/cityscapes/psanet50/model/train_epoch_200.pth  # evaluation model path
   save_folder: exp/cityscapes/psanet50/result/epoch_200/val/ss  # results save folder
-  colors_path: dataset/cityscapes/cityscapes_colors.txt  # path of dataset colors
-  names_path: dataset/cityscapes/cityscapes_names.txt  # path of dataset category names
+  colors_path: data/cityscapes/cityscapes_colors.txt  # path of dataset colors
+  names_path: data/cityscapes/cityscapes_names.txt  # path of dataset category names
