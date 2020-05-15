@@ -15,11 +15,10 @@ import torch.optim
 import torch.utils.data
 import torch.multiprocessing as mp
 import torch.distributed as dist
-import apex
 from tensorboardX import SummaryWriter
 
 from util import dataset, transform, config
-from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU
+from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port
 
 cv2.ocl.setUseOpenCL(False)
 cv2.setNumThreads(0)
@@ -85,11 +84,11 @@ def main():
     check(args)
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in args.train_gpu)
     if args.manual_seed is not None:
-    	random.seed(args.manual_seed)
-    	np.random.seed(args.manual_seed)
-    	torch.manual_seed(manualSeed)
-    	torch.cuda.manual_seed(manualSeed)
-    	torch.cuda.manual_seed_all(manualSeed)
+        random.seed(args.manual_seed)
+        np.random.seed(args.manual_seed)
+        torch.manual_seed(manualSeed)
+        torch.cuda.manual_seed(manualSeed)
+        torch.cuda.manual_seed_all(manualSeed)
         cudnn.benchmark = False
         cudnn.deterministic = True
     if args.dist_url == "env://" and args.world_size == -1:
@@ -101,6 +100,8 @@ def main():
         args.distributed = False
         args.multiprocessing_distributed = False
     if args.multiprocessing_distributed:
+        port = find_free_port()
+        args.dist_url = f"tcp://127.0.0.1:{port}"
         args.world_size = args.ngpus_per_node * args.world_size
         mp.spawn(main_worker, nprocs=args.ngpus_per_node, args=(args.ngpus_per_node, args))
     else:
@@ -110,14 +111,6 @@ def main():
 def main_worker(gpu, ngpus_per_node, argss):
     global args
     args = argss
-    if args.sync_bn:
-        if args.multiprocessing_distributed:
-            BatchNorm = apex.parallel.SyncBatchNorm
-        else:
-            from lib.sync_bn.modules import BatchNorm2d
-            BatchNorm = BatchNorm2d
-    else:
-        BatchNorm = nn.BatchNorm2d
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -128,16 +121,14 @@ def main_worker(gpu, ngpus_per_node, argss):
     criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_label)
     if args.arch == 'psp':
         from model.pspnet import PSPNet
-        model = PSPNet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, criterion=criterion, BatchNorm=BatchNorm)
+        model = PSPNet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, criterion=criterion)
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.ppm, model.cls, model.aux]
     elif args.arch == 'psa':
         from model.psanet import PSANet
         model = PSANet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, psa_type=args.psa_type,
                        compact=args.compact, shrink_factor=args.shrink_factor, mask_h=args.mask_h, mask_w=args.mask_w,
-                       normalization_factor=args.normalization_factor, psa_softmax=args.psa_softmax,
-                       criterion=criterion,
-                       BatchNorm=BatchNorm)
+                       normalization_factor=args.normalization_factor, psa_softmax=args.psa_softmax, criterion=criterion)
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.psa, model.cls, model.aux]
     params_list = []
@@ -147,6 +138,8 @@ def main_worker(gpu, ngpus_per_node, argss):
         params_list.append(dict(params=module.parameters(), lr=args.base_lr * 10))
     args.index_split = 5
     optimizer = torch.optim.SGD(params_list, lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    if args.sync_bn:
+        model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     if main_process():
         global logger, writer
@@ -160,13 +153,8 @@ def main_worker(gpu, ngpus_per_node, argss):
         torch.cuda.set_device(gpu)
         args.batch_size = int(args.batch_size / ngpus_per_node)
         args.batch_size_val = int(args.batch_size_val / ngpus_per_node)
-        args.workers = int(args.workers / ngpus_per_node)
-        if args.use_apex:
-            model, optimizer = apex.amp.initialize(model.cuda(), optimizer, opt_level=args.opt_level, keep_batchnorm_fp32=args.keep_batchnorm_fp32, loss_scale=args.loss_scale)
-            model = apex.parallel.DistributedDataParallel(model)
-        else:
-            model = torch.nn.parallel.DistributedDataParallel(model.cuda(), device_ids=[gpu])
-
+        args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
+        model = torch.nn.parallel.DistributedDataParallel(model.cuda(), device_ids=[gpu])
     else:
         model = torch.nn.DataParallel(model.cuda())
 
@@ -284,11 +272,7 @@ def train(train_loader, model, optimizer, epoch):
         loss = main_loss + args.aux_weight * aux_loss
 
         optimizer.zero_grad()
-        if args.use_apex and args.multiprocessing_distributed:
-            with apex.amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
-        else:
-            loss.backward()
+        loss.backward()
         optimizer.step()
 
         n = input.size(0)

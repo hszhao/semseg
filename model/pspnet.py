@@ -6,14 +6,14 @@ import model.resnet as models
 
 
 class PPM(nn.Module):
-    def __init__(self, in_dim, reduction_dim, bins, BatchNorm):
+    def __init__(self, in_dim, reduction_dim, bins):
         super(PPM, self).__init__()
         self.features = []
         for bin in bins:
             self.features.append(nn.Sequential(
                 nn.AdaptiveAvgPool2d(bin),
                 nn.Conv2d(in_dim, reduction_dim, kernel_size=1, bias=False),
-                BatchNorm(reduction_dim),
+                nn.BatchNorm2d(reduction_dim),
                 nn.ReLU(inplace=True)
             ))
         self.features = nn.ModuleList(self.features)
@@ -27,7 +27,7 @@ class PPM(nn.Module):
 
 
 class PSPNet(nn.Module):
-    def __init__(self, layers=50, bins=(1, 2, 3, 6), dropout=0.1, classes=2, zoom_factor=8, use_ppm=True, criterion=nn.CrossEntropyLoss(ignore_index=255), BatchNorm=nn.BatchNorm2d, pretrained=True):
+    def __init__(self, layers=50, bins=(1, 2, 3, 6), dropout=0.1, classes=2, zoom_factor=8, use_ppm=True, criterion=nn.CrossEntropyLoss(ignore_index=255), pretrained=True):
         super(PSPNet, self).__init__()
         assert layers in [50, 101, 152]
         assert 2048 % len(bins) == 0
@@ -36,7 +36,6 @@ class PSPNet(nn.Module):
         self.zoom_factor = zoom_factor
         self.use_ppm = use_ppm
         self.criterion = criterion
-        models.BatchNorm = BatchNorm
 
         if layers == 50:
             resnet = models.resnet50(pretrained=pretrained)
@@ -60,11 +59,11 @@ class PSPNet(nn.Module):
 
         fea_dim = 2048
         if use_ppm:
-            self.ppm = PPM(fea_dim, int(fea_dim/len(bins)), bins, BatchNorm)
+            self.ppm = PPM(fea_dim, int(fea_dim/len(bins)), bins)
             fea_dim *= 2
         self.cls = nn.Sequential(
             nn.Conv2d(fea_dim, 512, kernel_size=3, padding=1, bias=False),
-            BatchNorm(512),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
             nn.Dropout2d(p=dropout),
             nn.Conv2d(512, classes, kernel_size=1)
@@ -72,7 +71,7 @@ class PSPNet(nn.Module):
         if self.training:
             self.aux = nn.Sequential(
                 nn.Conv2d(1024, 256, kernel_size=3, padding=1, bias=False),
-                BatchNorm(256),
+                nn.BatchNorm2d(256),
                 nn.ReLU(inplace=True),
                 nn.Dropout2d(p=dropout),
                 nn.Conv2d(256, classes, kernel_size=1)

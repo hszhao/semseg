@@ -1,0 +1,77 @@
+## General
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.cuo
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+
+# Compiled protocol buffers
+*.pb.h
+*.pb.cc
+*_pb2.py
+
+# Compiled python
+*.pyc
+
+# Compiled MATLAB
+*.mex*
+
+# IPython notebook checkpoints
+.ipynb_checkpoints
+
+# Editor temporaries
+*.swp
+*~
+
+# Sublime Text settings
+*.sublime-workspace
+*.sublime-project
+
+# Eclipse Project settings
+*.*project
+.settings
+
+# QtCreator files
+*.user
+
+# PyCharm files
+.idea
+
+# Visual Studio Code files
+.vscode
+
+# OSX dir files
+.DS_Store
+
+# personal
+*.log
+*.pth
+*.caffemodel
+exp/
+summary/
+__pycache__/
+# data/
+back/
+*.png
+*.jpg
+*.log
+*.pth
+events*
+config/
+dataset/
+*.ninja_deps
+*.ninja_log
+*.ninja
+*.yaml
+slurm*
+initmodel

@@ -1,5 +1,15 @@
 #!/bin/sh
 
+## uncomment for slurm
+##SBATCH -p gpu
+##SBATCH --gres=gpu:8
+##SBATCH -c 80
+
+export PYTHONPATH=./
+eval "$(conda shell.bash hook)"
+conda activate pt140  # pytorch 1.4.0 env
+PYTHON=python
+
 dataset=$1
 exp_name=$2
 exp_dir=exp/${dataset}/${exp_name}

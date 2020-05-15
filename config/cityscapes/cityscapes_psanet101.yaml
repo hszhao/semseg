@@ -47,10 +47,6 @@ Distributed:
   multiprocessing_distributed: True
   world_size: 1
   rank: 0
-  use_apex: True
-  opt_level: 'O0'
-  keep_batchnorm_fp32:
-  loss_scale:
 
 TEST:
   test_list: dataset/cityscapes/list/fine_val.txt

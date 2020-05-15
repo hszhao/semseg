@@ -60,12 +60,11 @@ def intersectionAndUnionGPU(output, target, K, ignore_index=255):
     target = target.view(-1)
     output[target == ignore_index] = ignore_index
     intersection = output[output == target]
-    # https://github.com/pytorch/pytorch/issues/1382
-    area_intersection = torch.histc(intersection.float().cpu(), bins=K, min=0, max=K-1)
-    area_output = torch.histc(output.float().cpu(), bins=K, min=0, max=K-1)
-    area_target = torch.histc(target.float().cpu(), bins=K, min=0, max=K-1)
+    area_intersection = torch.histc(intersection, bins=K, min=0, max=K-1)
+    area_output = torch.histc(output, bins=K, min=0, max=K-1)
+    area_target = torch.histc(target, bins=K, min=0, max=K-1)
     area_union = area_output + area_target - area_intersection
-    return area_intersection.cuda(), area_union.cuda(), area_target.cuda()
+    return area_intersection, area_union, area_target
 
 
 def check_mkdir(dir_name):
@@ -157,3 +156,14 @@ def colorize(gray, palette):
     color = Image.fromarray(gray.astype(np.uint8)).convert('P')
     color.putpalette(palette)
     return color
+
+
+def find_free_port():
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Binding to port 0 will cause the OS to find an available port for us
+    sock.bind(("", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    # NOTE: there is still a chance the port could be taken by other processes.
+    return port

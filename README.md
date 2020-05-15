@@ -6,6 +6,11 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
 
 <img src="./figure/pspnet.png" width="900"/>
 
+### Update
+
+- 2020.05.15: Branch `master`, use official [nn.SyncBatchNorm](https://pytorch.org/docs/master/nn.html#torch.nn.SyncBatchNorm), only multiprocessing training is supported, tested with pytorch 1.4.0.
+- 2019.05.29: Branch `1.0.0`, both multithreading training ([nn.DataParallel](https://pytorch.org/docs/stable/nn.html#dataparallel)) and multiprocessing training ([nn.parallel.DistributedDataParallel](https://pytorch.org/docs/stable/_modules/torch/nn/parallel/distributed.html)) (**recommended**) are supported. And the later one is much faster. Use `syncbn` from [EncNet](https://github.com/zhanghang1989/PyTorch-Encoding) and [apex](https://github.com/NVIDIA/apex), tested with pytorch 1.0.0.
+
 ### Usage
 
 1. Highlight:
@@ -17,7 +22,7 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
 2. Requirement:
 
    - Hardware: 4-8 GPUs (better with >=11G GPU memory)
-   - Software: PyTorch>=1.0.0, Python3, [tensorboardX](https://github.com/lanpa/tensorboardX), [apex](https://github.com/NVIDIA/apex)
+   - Software: PyTorch>=1.1.0, Python3, [tensorboardX](https://github.com/lanpa/tensorboardX), 
 
 3. Clone the repository:
 
@@ -42,6 +47,11 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
      ```shell
      sh tool/train.sh ade20k pspnet50
      ```
+   - If you are using [SLURM](https://slurm.schedmd.com/documentation.html) for nodes manager, uncomment lines in train.sh and then do training:
+
+     ```shell
+     sbatch tool/train.sh ade20k pspnet50
+     ```
 
 5. Test:
 
@@ -62,7 +72,7 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
 6. Visualization: [tensorboardX](https://github.com/lanpa/tensorboardX) incorporated for better visualization.
 
    ```shell
-   tensorboard --logdir=run1:$EXP1,run2:$EXP2 --port=6789
+   tensorboard --logdir=exp/ade20k
    ```
 
 7. Other:

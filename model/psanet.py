@@ -8,7 +8,7 @@ import model.resnet as models
 
 class PSA(nn.Module):
     def __init__(self, in_channels=2048, mid_channels=512, psa_type=2, compact=False, shrink_factor=2, mask_h=59,
-                 mask_w=59, normalization_factor=1.0, psa_softmax=True, BatchNorm=nn.BatchNorm2d):
+                 mask_w=59, normalization_factor=1.0, psa_softmax=True):
         super(PSA, self).__init__()
         assert psa_type in [0, 1, 2]
         self.psa_type = psa_type
@@ -23,30 +23,30 @@ class PSA(nn.Module):
 
         self.reduce = nn.Sequential(
             nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False),
-            BatchNorm(mid_channels),
+            nn.BatchNorm2d(mid_channels),
             nn.ReLU(inplace=True)
         )
         self.attention = nn.Sequential(
             nn.Conv2d(mid_channels, mid_channels, kernel_size=1, bias=False),
-            BatchNorm(mid_channels),
+            nn.BatchNorm2d(mid_channels),
             nn.ReLU(inplace=True),
             nn.Conv2d(mid_channels, mask_h*mask_w, kernel_size=1, bias=False),
         )
         if psa_type == 2:
             self.reduce_p = nn.Sequential(
                 nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False),
-                BatchNorm(mid_channels),
+                nn.BatchNorm2d(mid_channels),
                 nn.ReLU(inplace=True)
             )
             self.attention_p = nn.Sequential(
                 nn.Conv2d(mid_channels, mid_channels, kernel_size=1, bias=False),
-                BatchNorm(mid_channels),
+                nn.BatchNorm2d(mid_channels),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(mid_channels, mask_h*mask_w, kernel_size=1, bias=False),
             )
         self.proj = nn.Sequential(
             nn.Conv2d(mid_channels * (2 if psa_type == 2 else 1), in_channels, kernel_size=1, bias=False),
-            BatchNorm(in_channels),
+            nn.BatchNorm2d(in_channels),
             nn.ReLU(inplace=True)
         )
 
@@ -101,7 +101,7 @@ class PSA(nn.Module):
 class PSANet(nn.Module):
     def __init__(self, layers=50, dropout=0.1, classes=2, zoom_factor=8, use_psa=True, psa_type=2, compact=False,
                  shrink_factor=2, mask_h=59, mask_w=59, normalization_factor=1.0, psa_softmax=True,
-                 criterion=nn.CrossEntropyLoss(ignore_index=255), BatchNorm=nn.BatchNorm2d, pretrained=True):
+                 criterion=nn.CrossEntropyLoss(ignore_index=255), pretrained=True):
         super(PSANet, self).__init__()
         assert layers in [50, 101, 152]
         assert classes > 1
@@ -110,7 +110,6 @@ class PSANet(nn.Module):
         self.zoom_factor = zoom_factor
         self.use_psa = use_psa
         self.criterion = criterion
-        models.BatchNorm = BatchNorm
 
         if layers == 50:
             resnet = models.resnet50(pretrained=pretrained)
@@ -134,11 +133,11 @@ class PSANet(nn.Module):
 
         fea_dim = 2048
         if use_psa:
-            self.psa = PSA(fea_dim, 512, psa_type, compact, shrink_factor, mask_h, mask_w, normalization_factor, psa_softmax, BatchNorm)
+            self.psa = PSA(fea_dim, 512, psa_type, compact, shrink_factor, mask_h, mask_w, normalization_factor, psa_softmax)
             fea_dim *= 2
         self.cls = nn.Sequential(
             nn.Conv2d(fea_dim, 512, kernel_size=3, padding=1, bias=False),
-            BatchNorm(512),
+            nn.BatchNorm2d(512),
             nn.ReLU(inplace=True),
             nn.Dropout2d(p=dropout),
             nn.Conv2d(512, classes, kernel_size=1)
@@ -146,7 +145,7 @@ class PSANet(nn.Module):
         if self.training:
             self.aux = nn.Sequential(
                 nn.Conv2d(1024, 256, kernel_size=3, padding=1, bias=False),
-                BatchNorm(256),
+                nn.BatchNorm2d(256),
                 nn.ReLU(inplace=True),
                 nn.Dropout2d(p=dropout),
                 nn.Conv2d(256, classes, kernel_size=1)
