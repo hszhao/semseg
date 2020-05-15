@@ -86,9 +86,9 @@ def main():
     if args.manual_seed is not None:
         random.seed(args.manual_seed)
         np.random.seed(args.manual_seed)
-        torch.manual_seed(manualSeed)
-        torch.cuda.manual_seed(manualSeed)
-        torch.cuda.manual_seed_all(manualSeed)
+        torch.manual_seed(args.manual_seed)
+        torch.cuda.manual_seed(args.manual_seed)
+        torch.cuda.manual_seed_all(args.manual_seed)
         cudnn.benchmark = False
         cudnn.deterministic = True
     if args.dist_url == "env://" and args.world_size == -1:
