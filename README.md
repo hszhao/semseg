@@ -15,7 +15,7 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
 
 1. Highlight:
 
-   - Both multithreading training ([nn.DataParallel](https://pytorch.org/docs/stable/nn.html#dataparallel)) and multiprocessing training ([nn.parallel.DistributedDataParallel](https://pytorch.org/docs/stable/_modules/torch/nn/parallel/distributed.html)) (**recommended**) are supported. And the later one is much faster.
+   - Fast multiprocessing training ([nn.parallel.DistributedDataParallel](https://pytorch.org/docs/stable/_modules/torch/nn/parallel/distributed.html)) with official [nn.SyncBatchNorm](https://pytorch.org/docs/master/nn.html#torch.nn.SyncBatchNorm).
    - Better reimplementation results with well designed code structures.
    - All initialization models, trained models and predictions are [available](https://drive.google.com/open?id=15wx9vOM0euyizq-M1uINgN0_wjVRf9J3).
 
