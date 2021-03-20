@@ -7,7 +7,7 @@
 
 export PYTHONPATH=./
 eval "$(conda shell.bash hook)"
-conda activate pt140  # pytorch 1.4.0 env
+conda activate test  # pytorch 1.7.1+cu110 env
 PYTHON=python
 
 dataset=$1
@@ -26,6 +26,6 @@ $PYTHON -u ${exp_dir}/train.py \
   --config=${config} \
   2>&1 | tee ${model_dir}/train-$now.log
 
-$PYTHON -u ${exp_dir}/test.py \
-  --config=${config} \
-  2>&1 | tee ${result_dir}/test-$now.log
+#$PYTHON -u ${exp_dir}/test.py \
+#  --config=${config} \
+#  2>&1 | tee ${result_dir}/test-$now.log
