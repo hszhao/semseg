@@ -1,5 +1,5 @@
 DATA:
-  data_root: dataset/voc2012
+  data_root: dataset/voc2012/data
   train_list: dataset/voc2012/list/train_aug.txt
   val_list: dataset/voc2012/list/val.txt
   classes: 21

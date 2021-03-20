@@ -1,7 +1,7 @@
 DATA:
-  data_root: dataset/voc2012
-  train_list: dataset/voc2012/list/train_aug.txt
-  val_list: dataset/voc2012/list/val.txt
+  data_root: dataset/voc2012/data
+  train_list: dataset/voc2012/train_aug.txt
+  val_list: dataset/voc2012/val.txt
   classes: 21
 
 TRAIN:
@@ -17,10 +17,10 @@ TRAIN:
   zoom_factor: 8  # zoom factor for final prediction during training, be in [1, 2, 4, 8]
   ignore_label: 255
   aux_weight: 0.4
-  train_gpu: [0, 1, 2, 3, 4, 5, 6, 7]
+  train_gpu: [0, 1]
   workers: 16  # data loader workers
-  batch_size: 16  # batch size for training
-  batch_size_val: 8  # batch size for validation during training, memory and speed tradeoff
+  batch_size: 8  # batch size for training
+  batch_size_val: 4  # batch size for validation during training, memory and speed tradeoff
   base_lr: 0.01
   epochs: 50
   start_epoch: 0
