@@ -83,6 +83,7 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
    - Datasets: attributes (`names` and `colors`) are in folder `dataset` and some sample lists can be accessed.
    - Some FAQs: [FAQ.md](./FAQ.md).
    - Former video predictions: high accuracy -- [PSPNet](https://youtu.be/rB1BmBOkKTw), [PSANet](https://youtu.be/l5xu1DI6pDk); high efficiency -- [ICNet](https://youtu.be/qWl9idsCuLQ).
+   - [The details of composing VOC Dataset!](./Train.md)
 
 ### Performance
 
