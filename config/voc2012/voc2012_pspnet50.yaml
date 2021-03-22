@@ -42,7 +42,7 @@ Distributed:
   rank: 0
 
 TEST:
-  test_list: dataset/voc2012/list/val.txt
+  test_list: dataset/voc2012/val.txt
   split: val  # split in [train, val and test]
   base_size: 512  # based size for scaling
   test_h: 473
