@@ -177,7 +177,6 @@ def test(model, image_path, classes, mean, std, base_size, crop_h, crop_w, scale
             new_h = round(long_size/float(w)*h)
         image_scale = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
         prediction += scale_process(model, image_scale, classes, crop_h, crop_w, h, w, mean, std)
-    prediction = scale_process(model, image_scale, classes, crop_h, crop_w, h, w, mean, std)
     prediction = np.argmax(prediction, axis=2)
     gray = np.uint8(prediction)
     color = colorize(gray, colors)
