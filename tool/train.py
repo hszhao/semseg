@@ -108,7 +108,7 @@ def main():
         main_worker(args.train_gpu, args.ngpus_per_node, args)
 
 
-def main_worker(gpu, ngpus_per_node, argss):
+def main_worker(gpu, ngpus_per_node, argss, fine_tune=False, classification_x=False, classification_y=False):
     global args
     args = argss
     if args.distributed:
@@ -124,6 +124,11 @@ def main_worker(gpu, ngpus_per_node, argss):
         model = PSPNet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, criterion=criterion)
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.ppm, model.cls, model.aux]
+    elif args.arch == 'psp_c':
+        from model.pspnet_c import PSPNetClassification
+        model = PSPNetClassification(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth")
+        modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
+        modules_new = [model.ppm, model.cls, model.aux]
     elif args.arch == 'psa':
         from model.psanet import PSANet
         model = PSANet(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, psa_type=args.psa_type,
@@ -132,10 +137,13 @@ def main_worker(gpu, ngpus_per_node, argss):
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.psa, model.cls, model.aux]
     params_list = []
-    for module in modules_ori:
-        params_list.append(dict(params=module.parameters(), lr=args.base_lr))
-    for module in modules_new:
-        params_list.append(dict(params=module.parameters(), lr=args.base_lr * 10))
+    if fine_tune:
+        params_list.append(dict(params=model.classification_head.parameters(), lr=args.base_lr*10))
+    else:
+        for module in modules_ori:
+            params_list.append(dict(params=module.parameters(), lr=args.base_lr))
+        for module in modules_new:
+            params_list.append(dict(params=module.parameters(), lr=args.base_lr * 10))
     args.index_split = 5
     optimizer = torch.optim.SGD(params_list, lr=args.base_lr, momentum=args.momentum, weight_decay=args.weight_decay)
     if args.sync_bn:
@@ -199,7 +207,7 @@ def main_worker(gpu, ngpus_per_node, argss):
         transform.Crop([args.train_h, args.train_w], crop_type='rand', padding=mean, ignore_label=args.ignore_label),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
-    train_data = dataset.SemData(split='train', data_root=args.data_root, data_list=args.train_list, transform=train_transform)
+    train_data = dataset.SemData(split='train', data_root=args.data_root, data_list=args.train_list, transform=train_transform, classification_heads_x=classification_x, classification_heads_y=classification_y)
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_data)
     else:
@@ -210,7 +218,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             transform.Crop([args.train_h, args.train_w], crop_type='center', padding=mean, ignore_label=args.ignore_label),
             transform.ToTensor(),
             transform.Normalize(mean=mean, std=std)])
-        val_data = dataset.SemData(split='val', data_root=args.data_root, data_list=args.val_list, transform=val_transform)
+        val_data = dataset.SemData(split='val', data_root=args.data_root, data_list=args.val_list, transform=val_transform, classification_heads_x=classification_x, classification_heads_y=classification_y)
         if args.distributed:
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_data)
         else:
@@ -405,6 +413,12 @@ def validate(val_loader, model, criterion):
         logger.info('<<<<<<<<<<<<<<<<< End Evaluation <<<<<<<<<<<<<<<<<')
     return loss_meter.avg, mIoU, mAcc, allAcc
 
+
+
+def my_main():
+    train_gpu = [0]
+    os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(str(x) for x in train_gpu)
+    main_worker(1, 1, args)
 
 if __name__ == '__main__':
     main()
