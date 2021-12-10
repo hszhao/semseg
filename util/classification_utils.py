@@ -28,6 +28,11 @@ def unique_to_sparse(unique):
             sparse[num] = 1
     return sparse
 
+def arr_to_dist(onehot_mask):
+    vec = onehot_mask.reshape(-1, N_CLASSES)
+    dist = vec.sum(axis=0) / (vec.sum() + 1e-10)
+    return dist
+
 def vector_list_to_mat(vectors):
     """
     take list of vectors and stack them to a square matrix
@@ -47,12 +52,34 @@ def vector_list_to_mat(vectors):
     rows.append(curr_row)
     return np.asarray(rows)
 
+def extract_mask_distributions(mask, head_sizes=[1]):
+    """
+    annotation mask --> set of head_sizes x head_sizes matrices with one-hot class labels
+    encoding distribution of classes present at that region
+    """
+    onehot = (np.arange(255+1) == mask.numpy()[...,None]).astype(int)
+    onehot_ignore = onehot[:,:,:N_CLASSES]
+    dist_labels = []
+    for s in head_sizes:
+        if s == 1: # special case
+            mat = arr_to_dist(onehot_ignore)
+            mat = np.expand_dims(mat, -1)
+            mat = np.expand_dims(mat, -1)
+        else:
+            quadrants = mask_to_subgrids(onehot_ignore, s)
+            mat_vecs = [ arr_to_dist(m) for m in quadrants ]
+            mat = vector_list_to_mat(mat_vecs).astype(np.float32)
+            mat = mat.transpose(2, 0, 1)
+        dist_labels.append(mat)
+
+    return dist_labels
+
+
 def extract_mask_classes(mask, head_sizes=[1, 2, 3, 6]):
     """
     annotation mask --> set of head_sizes x head_sizes matrices with one-hot class labels
     encoding which classes are present in that region
     """
-    assert len(head_sizes) == 4
     classification_head_labels = []
     for s in head_sizes:
         if s == 1: # special case

@@ -101,9 +101,9 @@ def train(train_loader, model, optimizer, epoch):
         main_loss = torch.mean(main_loss)
         loss = main_loss
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        # optimizer.zero_grad()
+        # loss.backward()
+        # optimizer.step()
 
         n = input.size(0)
 
@@ -169,31 +169,73 @@ def validate(model):
         transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
-    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, classification_heads_x=False, classification_heads_y=False)
+    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, classification_heads_x=False, classification_heads_y=True)
     val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None)
     batch_time = AverageMeter()
     data_time = AverageMeter()
     intersection_meter = AverageMeter()
     union_meter = AverageMeter()
     target_meter = AverageMeter()
+    intersection_meter2 = AverageMeter()
+    union_meter2 = AverageMeter()
+    target_meter2 = AverageMeter()
 
     model.eval()
     end = time.time()
+    ious = []
+    accs = []
+    ious2 = []
+    accs2 = []
+
+    logit_1 = []
+    logit_2 = []
+    prob_1 = []
+    dist = []
     for i, (input, target) in enumerate(val_loader):
+        seg_target, dist_target = target
         data_time.update(time.time() - end)
         input = input.cuda(non_blocking=True)
-        target = target.cuda(non_blocking=True)
-        output, _ = model(input)
+        seg_target = seg_target.cuda(non_blocking=True)
+        dist_target = dist_target[0]
+        dist_target = dist_target.cuda(non_blocking=True)
+        output, output_alt = model(input, distributions=dist_target)
+
+        # seg_target_mask = torch.where(seg_target == 255, output.max(1)[1], seg_target)
+        # seg_onehot = nn.functional.one_hot(seg_target_mask, num_classes=150).float().permute(0, 3, 1, 2)
+        # pixel_dist = nn.AdaptiveAvgPool2d((60, 60))(seg_onehot)
+        # dist.append(pixel_dist)
+
+        # logit_1.append(logits[-1])
+        # logit_2.append(nn.ReLU()(logits[-1]))
+        # prob_1.append(nn.Sigmoid()(logits[-1]))
 
         n = input.size(0)
 
         output = output.max(1)[1]
-        intersection, union, target = intersectionAndUnionGPU(output, target, 150, 255)
+        intersection, union, target = intersectionAndUnionGPU(output, seg_target, 150, 255)
+        
         intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
         intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
 
+        ious.append(intersection / (union + 1e-10))
+        accs.append(intersection / (target + 1e-10))
+
+        output_alt = output_alt.max(1)[1]
+        intersection2, union2, target2 = intersectionAndUnionGPU(output_alt, seg_target, 150, 255)
+        
+        intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
+        intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
+
+        ious2.append(intersection2 / (union2 + 1e-10))
+        accs2.append(intersection2 / (target2 + 1e-10))
+
         batch_time.update(time.time() - end)
         end = time.time()
+
+    # logit_1 = torch.stack([x.cpu() for x in logit_1]) 
+    # logit_2 =torch.stack([x.cpu() for x in logit_2]) 
+    # prob_1 = torch.stack([x.cpu() for x in prob_1]) 
+    # dist = torch.stack([x.cpu() for x in dist]) 
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
@@ -201,16 +243,21 @@ def validate(model):
     mAcc = np.mean(accuracy_class)
     allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
     print('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+
+    iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
+    accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
+    mIoU2 = np.mean(iou_class2)
+    mAcc2 = np.mean(accuracy_class2)
+    allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
+    print('Val result2: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
     return mIoU, mAcc, allAcc
 
-def main(model, agg_type="conv"):
-    # model = PSPNetAggregation(pspnet_weights="exp/ade20k/pspnet50/model/classification.pth").to("cuda")
-    # checkpoint = torch.load("exp/ade20k/pspnet50/model/aggregation.pth")
-    # model.load_state_dict(checkpoint["state_dict"])
+def main(model):
     learning_rate = 1e-3
     # params_list = [dict(params=model.channel_weights.parameters(), lr=learning_rate)]
     # optimizer = torch.optim.SGD(params_list, lr=1e-2, momentum=0.9, weight_decay=1e-4)
-    optimizer = torch.optim.Adam(params=model.channel_weights.parameters(), lr=learning_rate, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(lr=learning_rate, weight_decay=1e-4)
+    train_epochs = [ ]
     val_epochs = [ ]
     train_transform = transform.Compose([
     transform.RandScale([0.5, 2.0]),
@@ -221,25 +268,14 @@ def main(model, agg_type="conv"):
     transform.ToTensor(),
     transform.Normalize(mean=mean, std=std)])
     train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, classification_heads_x=True, classification_heads_y=False)
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, sampler=None, drop_last=True)
     for epoch in range(0, epochs):
-        epoch_log = epoch + 1
-        train(train_loader, model, optimizer, epoch)
-        # print('loss_train', loss_train, epoch_log)
-        # print('mIoU_train', mIoU_train, epoch_log)
-        # print('mAcc_train', mAcc_train, epoch_log)
-        # print('allAcc_train', allAcc_train, epoch_log)
-
-        # if (epoch_log % args.save_freq == 0) and main_process():
-        #     filename = args.save_path + '/train_epoch_' + str(epoch_log) + '.pth'
-        #     logger.info('Saving checkpoint to: ' + filename)
-        #     torch.save({'epoch': epoch_log, 'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, filename)
-        #     if epoch_log / args.save_freq > 2:
-        #         deletename = args.save_path + '/train_epoch_' + str(epoch_log - args.save_freq * 2) + '.pth'
-        #         os.remove(deletename)
-        mIoU, mAcc, allAcc = validate(model)
-        val_epochs.append((mIoU, mAcc, allAcc))
-    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"exp/ade20k/pspnet50/model/aggregation_{agg_type}.pth")
+        # mIoU, mAcc, allAcc = validate(model)
+        # val_epochs.append((mIoU, mAcc, allAcc))
+        _, t_mIoU, t_mAcc, t_allAcc = train(train_loader, model, optimizer, epoch)
+        train_epochs.append((t_mIoU, t_mAcc, t_allAcc))
+        
+    # torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"exp/ade20k/pspnet50/model/asdfasdf.pth")
     return val_epochs
     # validate(model)
 
@@ -267,8 +303,8 @@ if __name__ == "__main__":
     # Train 6505/0.7651/0.8962
     # Val 0.4134/0.5269/0.7936
     # 0.4183/0.5376/0.7945
-    model_conv = PSPNetAggregation(pspnet_weights="exp/ade20k/pspnet50/model/classification.pth", agg="conv_conv").to("cuda")
-    val_hist_conv = main(model_conv, agg_type="conv")
+    model_conv = PSPNetAggregation(pspnet_weights="distributions_ae.pth").to("cuda")
+    val_hist_conv = main(model_conv)
     print(val_hist_conv)
 
     # Val result: mIoU/mAcc/allAcc 0.4007/0.4888/0.7865.

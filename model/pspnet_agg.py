@@ -1,3 +1,4 @@
+from numpy import logical_and
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -8,79 +9,57 @@ from collections import OrderedDict
 # sys.path.insert(0, os.path.abspath('.'))
 from model.pspnet_c import PSPNetClassification
 
-class ClassificationAttentionConv(nn.Module):
+class ClassificationLogitCombination(nn.Module):
     def __init__(self, classes=150, agg_dim=(6,6)):
-        super(ClassificationAttentionConv, self).__init__()
-        self.classes=150
+        super(ClassificationLogitCombination, self).__init__()
+        self.classes = classes
         self.agg_dim = agg_dim
-        self.combination1 = nn.Conv2d(in_channels=classes*4, out_channels=classes, kernel_size=1, bias=False)
-        self.combination2 = nn.Conv2d(in_channels=classes, out_channels=classes, padding=1, kernel_size=3, bias=False)
 
-    def forward(self, x, out_size):
-        # upsample all scales to agg dim
+    def forward(self, features, logits, out_size):
+        # upsample all scales to agg dim (6x6)
         upsampled = []
-        for scale in x:
+        for scale in logits:
+            # change classifications to logits
             upsampled.append(F.interpolate(scale, size=self.agg_dim, mode='nearest'))
-        concat = torch.cat(upsampled, dim=1)
-        channel_weights = self.combination1(concat)
-        channel_weights = self.combination2(channel_weights)
-        channel_weights = F.interpolate(channel_weights, size=out_size, mode='bilinear', align_corners=True)
-        channel_weights = torch.sigmoid(channel_weights)
-        return channel_weights
+        stack = torch.stack(upsampled)
+        # upsampled + linearly combined classifications 
+        # classification_logits = torch.mean(stack, dim=0)  # take mean, could be a learned weighted (1 weights for each scale) sum also
+        classification_logits = stack[-1]
+        classification_logits = F.normalize(classification_logits, p=1, dim=1)
+        classification_logits = F.interpolate(classification_logits, size=out_size, mode="bilinear", align_corners=True)
 
-class ClassificationBiasConv(nn.Module):
-    def __init__(self, classes=150, agg_dim=(6,6)):
-        super(ClassificationBiasConv, self).__init__()
-        self.classes=150
-        self.agg_dim = agg_dim
-        self.combination1 = nn.Conv2d(in_channels=classes*4, out_channels=classes, kernel_size=1, bias=False)
-        self.combination2 = nn.Conv2d(in_channels=classes, out_channels=classes, padding=1, kernel_size=3, bias=False)
-        self.combination3 = nn.Conv2d(in_channels=classes*2, out_channels=classes, kernel_size=1, bias=False)
-        orig_weights = torch.eye(classes)
-        orig_weights = torch.unsqueeze(orig_weights, -1)
-        orig_weights = torch.unsqueeze(orig_weights, -1)
-        classif_weights = torch.zeros((150, 150, 1, 1))
-        self.combination3.weight.data = torch.cat([orig_weights, classif_weights], dim=1)
+        # l1 norm single scale
+        # Val result: mIoU/mAcc/allAcc 0.4242/0.5334/0.7971
+        # Val result2: mIoU/mAcc/allAcc 0.3968/0.4988/0.7872
+        classification_logits = classification_logits
 
-    def forward(self, features, classifications, out_size):
-        # upsample all scales to agg dim
-        upsampled = []
-        for scale in classifications:
-            upsampled.append(F.interpolate(scale, size=self.agg_dim, mode='nearest'))
-        concat = torch.cat(upsampled, dim=1)
-        channel_weights = self.combination1(concat)
-        channel_weights = self.combination2(channel_weights)
-        channel_weights = F.interpolate(channel_weights, size=out_size, mode='bilinear', align_corners=True)
-        channel_weights = torch.sigmoid(channel_weights)
-        concat2 = torch.cat([features, channel_weights], dim=1)
-        reweighted_features = self.combination3(concat2)
-        return reweighted_features
+        segmentation_logits = features
+        segmentation_logits = F.normalize(features, p=1, dim=1)
 
-class ClassificationAttentionMlp(nn.Module):
-    def __init__(self, classes=150, agg_dim=(6,6)):
-        super(ClassificationAttentionMlp, self).__init__()
-        self.classes=150
-        self.agg_dim = agg_dim
-        in_dim = (1 + 2**2 + 3**2 + 6**2)*classes
-        self.combination1 = nn.Linear(in_features=in_dim, out_features=classes*6*6, bias=False)
+        return classification_logits + segmentation_logits
 
-    def forward(self, x, out_size):
-        # upsample all scales to agg dim
-        flattened = []
-        for scale in x:
-            flattened.append(torch.flatten(scale, start_dim=1))
-        concat = torch.cat(flattened, dim=1)
-        channel_weights = self.combination1(concat)
-        channel_weights = torch.reshape(channel_weights, shape=((-1, self.classes, self.agg_dim[0], self.agg_dim[1])))
-        channel_weights = F.interpolate(channel_weights, size=out_size, mode='bilinear', align_corners=True)
-        channel_weights = torch.sigmoid(channel_weights)
-        return channel_weights
+
+class DistributionMatch(nn.Module):
+    def __init__(self):
+        super(DistributionMatch, self).__init__()
+
+    def forward(self, features, distribution):
+        scale = distribution[0].shape[3]  # e.g. 1x1 .. 6x6
+        softmax = nn.Softmax(dim=1)(features)
+        prediction_area = (features.size()[2]/scale) * (features.size()[3]/scale)
+        prediction_pool = nn.AvgPool2d(kernel_size=features.size()[3] // scale, divisor_override=1)(softmax)
+        predicted_distribution = prediction_pool / prediction_area
+        correction = distribution[0] - predicted_distribution
+        if scale != 1:
+            correction = F.interpolate(correction, size=softmax.size()[2:], mode="nearest")
+
+        return softmax + correction
 
 class PSPNetAggregation(nn.Module):
     """
     transfer learn pspnet with trained classification heads to benchmark classification head + presoftmax methods
     """
-    def __init__(self, layers=50, classes=150, zoom_factor=8, agg="conv_conv", pspnet_weights=None):
+    def __init__(self, layers=50, classes=150, zoom_factor=8, pspnet_weights=None):
         super(PSPNetAggregation, self).__init__()
         self.pspnet = PSPNetClassification(layers=layers, classes=classes, zoom_factor=zoom_factor, pspnet_weights=None)
         if pspnet_weights is not None:
@@ -92,12 +71,11 @@ class PSPNetAggregation(nn.Module):
             self.pspnet.load_state_dict(checkpoint)
         for param in self.pspnet.parameters():
             param.requires_grad = False
-        # self.channel_weights = ClassificationAttentionConv() if agg == "conv" else ClassificationAttentionMlp()
-        self.channel_weights = ClassificationBiasConv()
+        self.combo = DistributionMatch() # ClassificationLogitCombination()
         self.zoom_factor = zoom_factor
         self.classes = classes
 
-    def forward(self, x, y=None, classifications=None):
+    def forward(self, x, y=None, distributions=None):
         x_size = x.size()
         assert (x_size[2]-1) % 8 == 0 and (x_size[3]-1) % 8 == 0
         h = int((x_size[2] - 1) / 8 * self.zoom_factor + 1)
@@ -106,38 +84,22 @@ class PSPNetAggregation(nn.Module):
         x = self.pspnet.pspnet.layer0(x)
         x = self.pspnet.pspnet.layer1(x)
         x = self.pspnet.pspnet.layer2(x)
-        x_tmp = self.pspnet.pspnet.layer3(x)
-        x = self.pspnet.pspnet.layer4(x_tmp)
+        x = self.pspnet.pspnet.layer3(x)
+        x = self.pspnet.pspnet.layer4(x)
 
-        x, class_pred = self.pspnet.ppm_classif(x)
+        x_tmp = self.pspnet.pspnet.ppm(x)
 
-        if classifications is None:
-            classifications = class_pred
-
-        # weights = self.channel_weights(classifications, out_size=x.size()[2:])
-
-        x = self.pspnet.pspnet.cls(x)
-
-        x = self.channel_weights(features=x, classifications=classifications, out_size=x.size()[2:])
-
-        # x = x * weights
+        x, distributions, ae_loss = self.pspnet.pred(x_tmp, scales=[1])
+        
+        x_alt = self.combo(x, distributions)
 
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
+            x_alt = F.interpolate(x_alt, size=(h, w), mode='bilinear', align_corners=True)
 
         if self.training:
             segmentation_label = y
-            main_loss = self.pspnet.pspnet.criterion(x, segmentation_label)
-            return x.max(1)[1], main_loss
+            main_loss = self.pspnet.pspnet.criterion(x_alt, segmentation_label)
+            return x_alt.max(1)[1], main_loss
         else:
-            return x, classifications
-
-# if __name__ == '__main__':
-#     import os
-#     os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
-#     input = torch.rand(4, 3, 473, 473).cuda()
-#     model = PSPNet(layers=50, bins=(1, 2, 3, 6), dropout=0.1, classes=21, zoom_factor=1, use_ppm=True, pretrained=True).cuda()
-#     model.eval()
-#     print(model)
-#     output = model(input)
-#     print('PSPNet', output.size())
+            return x, x_alt

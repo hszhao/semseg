@@ -16,6 +16,8 @@ import torch.utils.data
 import torch.multiprocessing as mp
 import torch.distributed as dist
 
+from tqdm import tqdm
+
 import sys, os
 sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(1, os.path.abspath('..'))
@@ -40,14 +42,14 @@ data_root = "dataset/ade20k"
 train_list = "dataset/ade20k/list/training.txt"
 batch_size = 16
 valid_list = "dataset/ade20k/list/validation.txt"
-epochs=10
+epochs=5
 n_classes = 150
 
 def mean_auc(classification_labels, classification_predictions):
     class_aucs = [0] * n_classes
     class_counts = [0] * n_classes
     # loop over each classification head
-    for scale_idx in range (len(classification_labels)):
+    for scale_idx in range (1):
         y_true, y_pred = classification_labels[scale_idx], classification_predictions[scale_idx]
         y_true, y_pred = y_true.cpu().detach().numpy(), y_pred.cpu().detach().numpy()
         # loop over n_classes
@@ -69,8 +71,16 @@ def mean_auc(classification_labels, classification_predictions):
     # return mean auc of classes present in the batch
     mean_auc_batch = np.mean(class_mean_aucs)
     return mean_auc_batch
-    
 
+def distribution_distance(distribution_labels, distribution_predictions):
+    distances = []
+    for scale in range(len(distribution_labels)):
+        y_true, y_pred = distribution_labels[scale], distribution_predictions[scale]
+        y_true, y_pred = y_true.cpu().detach().numpy(), y_pred.cpu().detach().numpy()
+        distance = np.sum(np.abs(y_true - y_pred))
+        distances.append(distance)
+    return distances
+ 
 def train(train_loader, model, optimizer, epoch):
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -81,18 +91,25 @@ def train(train_loader, model, optimizer, epoch):
     union_meter = AverageMeter()
     target_meter = AverageMeter()
 
+    # step lr decay
+    base_lr = 1e-3
+    decay = 0.5
+    epoch_lr = base_lr * (decay**epoch)
+    print("reducing learning rate to", epoch_lr)
+    optimizer.param_groups[0]["lr"] = epoch_lr
+
     model.train()
     end = time.time()
     max_iter = epochs * len(train_loader)
-    for i, (input, target) in enumerate(train_loader):
+    for i, (input, target) in tqdm(enumerate(train_loader)):
         data_time.update(time.time() - end)
         seg_target, class_target = target
         seg_target = seg_target.cuda(non_blocking=True)
         class_target = [ct.float().cuda(non_blocking=True) for ct in class_target]
         input = input.cuda(non_blocking=True)
         target = (seg_target, class_target)
-        segmentation, classification, main_loss, aux_loss, classification_loss = model(input, target)
-        main_loss, aux_loss, class_loss = torch.mean(main_loss), torch.mean(aux_loss), torch.mean(classification_loss)
+        segmentation, distributions, main_loss, aux_loss, distributions_loss = model(input, target)
+        main_loss, aux_loss, class_loss = torch.mean(main_loss), torch.mean(aux_loss), torch.mean(distributions_loss)
         loss = class_loss
 
         optimizer.zero_grad()
@@ -100,35 +117,9 @@ def train(train_loader, model, optimizer, epoch):
         optimizer.step()
 
         n = input.size(0)
+        dist_metric = distribution_distance(class_target, distributions)
 
-        intersection, union, target = intersectionAndUnionGPU(segmentation, seg_target, 150, 255)
-
-        auc = mean_auc(class_target, classification)
-
-        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
-        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
-
-        accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        main_loss_meter.update(main_loss.item(), n)
-        aux_loss_meter.update(aux_loss.item(), n)
-        loss_meter.update(loss.item(), n)
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        current_iter = epoch * len(train_loader) + i + 1
-        current_lr = poly_learning_rate(1e-2, current_iter, max_iter, power=0.9)
-        for index in range(0, 1):
-            optimizer.param_groups[index]['lr'] = current_lr
-        # for index in range(args.index_split, len(optimizer.param_groups)):
-        #     optimizer.param_groups[index]['lr'] = current_lr * 10
-        remain_iter = max_iter - current_iter
-        remain_time = remain_iter * batch_time.avg
-        t_m, t_s = divmod(remain_time, 60)
-        t_h, t_m = divmod(t_m, 60)
-        remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-
-        print('Epoch: [{}/{}][{}/{}] '
-                'Auc: {}'.format(epoch+1, epochs, i + 1, len(train_loader), auc))
+        print(f'Batch {i+1}/{len(train_loader)}, Loss: {class_loss}, Distance {dist_metric[0]/batch_size}')
 
 def validate(model):
     val_transform = transform.Compose([
@@ -136,17 +127,15 @@ def validate(model):
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
     val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, classification_heads_x=False, classification_heads_y=True)
-    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None)
+    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=4, pin_memory=True, sampler=None)
     batch_time = AverageMeter()
     data_time = AverageMeter()
-    intersection_meter = AverageMeter()
-    union_meter = AverageMeter()
-    target_meter = AverageMeter()
-    aucs = []
+    
+    metrics = []
 
     model.eval()
     end = time.time()
-    for i, (input, target) in enumerate(val_loader):
+    for i, (input, target) in tqdm(enumerate(val_loader)):
         data_time.update(time.time() - end)
         seg_target, class_target = target
         seg_target = seg_target.cuda(non_blocking=True)
@@ -157,18 +146,24 @@ def validate(model):
         # class_target = [ct.float().cuda(non_blocking=True) for ct in class_target]
         # input = input.cuda(non_blocking=True)
         # target = (seg_target, class_target)
-        segmentation, classification = model(input, target)
+        segmentation, distributions = model(input, seg_target)
 
-        auc = mean_auc(class_target, classification)
-        aucs.append(auc)
+        dist_metric = distribution_distance(class_target, distributions)
 
-    print('Val result: auc ', np.mean(aucs))
-    return np.mean(aucs)
+        metrics.append(dist_metric)
+
+    print('Val result: ', np.mean(metrics) / batch_size)
+    return np.mean(metrics) / batch_size
 
 def main():
     model = PSPNetClassification(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth").to("cuda")
+    # checkpoint = torch.load("/home/connor/Dev/semseg/classification_v2_ep5.pth")['state_dict']
+    # model.load_state_dict(checkpoint)
     # params_list = [dict(params=model.classification_head.parameters(), lr=1e-2)]
-    optimizer = torch.optim.Adam(params=model.classification_head.parameters(), lr=1e-3, weight_decay=1e-4)
+    lr = 1e-3
+    params = [dict(params=c[1].parameters(), lr=lr) for c in model.pred.named_children() if c[0] != 'cls']
+    # new_params = [model.pred.]
+    optimizer = torch.optim.Adam(params=params, lr=lr, weight_decay=1e-4)
 
     train_transform = transform.Compose([
     transform.RandScale([0.5, 2.0]),
@@ -180,15 +175,16 @@ def main():
     transform.Normalize(mean=mean, std=std)])
     train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, classification_heads_x=False, classification_heads_y=True)
     val_results = []
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, sampler=None, drop_last=True)
     for epoch in range(0, epochs):
-        epoch_log = epoch + 1
         train(train_loader, model, optimizer, epoch)
-        val_auc = validate(model)
-        val_results.append(val_auc)
-
+        val_metric = validate(model)
+        val_results.append(val_metric)
+        # val_auc = validate(model)
+        # val_results.append(val_auc)
+        
     print(val_results)
-    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, "classification_v2.pth")
+    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, "distributions.pth")
 
 if __name__ == "__main__":
     main()

@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from torch.utils.data import Dataset
-from .classification_utils import extract_mask_classes
+from .classification_utils import extract_mask_classes, extract_mask_distributions
 
 IMG_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm']
 
@@ -72,7 +72,7 @@ class SemData(Dataset):
         if self.transform is not None:
             image, label = self.transform(image, label)
         if self.classification_heads_x or self.classification_heads_y:
-            gt_heads = extract_mask_classes(label)
+            gt_heads = extract_mask_distributions(label)
             if self.classification_heads_x:
                 image = (image, gt_heads)
             if self.classification_heads_y:
