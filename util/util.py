@@ -1,14 +1,16 @@
+import math
 import os
-import numpy as np
-from PIL import Image
 
+import numpy as np
 import torch
-from torch import nn
 import torch.nn.init as initer
+from PIL import Image
+from torch import nn
 
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -37,32 +39,38 @@ def poly_learning_rate(base_lr, curr_iter, max_iter, power=0.9):
     return lr
 
 
+def cosine_learning_rate(base_lr, curr_iter, max_iter):
+    """poly learning rate policy"""
+    lr = 1 / 2 * base_lr * (1 + math.cos(curr_iter / max_iter * math.pi))
+    return lr
+
+
 def intersectionAndUnion(output, target, K, ignore_index=255):
     # 'K' classes, output and target sizes are N or N * L or N * H * W, each value in range 0 to K - 1.
-    assert (output.ndim in [1, 2, 3])
+    assert output.ndim in [1, 2, 3]
     assert output.shape == target.shape
     output = output.reshape(output.size).copy()
     target = target.reshape(target.size)
     output[np.where(target == ignore_index)[0]] = ignore_index
     intersection = output[np.where(output == target)[0]]
-    area_intersection, _ = np.histogram(intersection, bins=np.arange(K+1))
-    area_output, _ = np.histogram(output, bins=np.arange(K+1))
-    area_target, _ = np.histogram(target, bins=np.arange(K+1))
+    area_intersection, _ = np.histogram(intersection, bins=np.arange(K + 1))
+    area_output, _ = np.histogram(output, bins=np.arange(K + 1))
+    area_target, _ = np.histogram(target, bins=np.arange(K + 1))
     area_union = area_output + area_target - area_intersection
     return area_intersection, area_union, area_target
 
 
 def intersectionAndUnionGPU(output, target, K, ignore_index=255):
     # 'K' classes, output and target sizes are N or N * L or N * H * W, each value in range 0 to K - 1.
-    assert (output.dim() in [1, 2, 3])
+    assert output.dim() in [1, 2, 3]
     assert output.shape == target.shape
     output = output.view(-1)
     target = target.view(-1)
     output[target == ignore_index] = ignore_index
     intersection = output[output == target]
-    area_intersection = torch.histc(intersection, bins=K, min=0, max=K-1)
-    area_output = torch.histc(output, bins=K, min=0, max=K-1)
-    area_target = torch.histc(target, bins=K, min=0, max=K-1)
+    area_intersection = torch.histc(intersection, bins=K, min=0, max=K - 1)
+    area_output = torch.histc(output, bins=K, min=0, max=K - 1)
+    area_target = torch.histc(target, bins=K, min=0, max=K - 1)
     area_union = area_output + area_target - area_intersection
     return area_intersection, area_union, area_target
 
@@ -77,7 +85,7 @@ def check_makedirs(dir_name):
         os.makedirs(dir_name)
 
 
-def init_weights(model, conv='kaiming', batchnorm='normal', linear='kaiming', lstm='kaiming'):
+def init_weights(model, conv="kaiming", batchnorm="normal", linear="kaiming", lstm="kaiming"):
     """
     :param model: Pytorch Model which is nn.Module
     :param conv:  'kaiming' or 'xavier'
@@ -87,9 +95,9 @@ def init_weights(model, conv='kaiming', batchnorm='normal', linear='kaiming', ls
     """
     for m in model.modules():
         if isinstance(m, (nn.modules.conv._ConvNd)):
-            if conv == 'kaiming':
+            if conv == "kaiming":
                 initer.kaiming_normal_(m.weight)
-            elif conv == 'xavier':
+            elif conv == "xavier":
                 initer.xavier_normal_(m.weight)
             else:
                 raise ValueError("init type of conv error.\n")
@@ -97,18 +105,18 @@ def init_weights(model, conv='kaiming', batchnorm='normal', linear='kaiming', ls
                 initer.constant_(m.bias, 0)
 
         elif isinstance(m, (nn.modules.batchnorm._BatchNorm)):
-            if batchnorm == 'normal':
+            if batchnorm == "normal":
                 initer.normal_(m.weight, 1.0, 0.02)
-            elif batchnorm == 'constant':
+            elif batchnorm == "constant":
                 initer.constant_(m.weight, 1.0)
             else:
                 raise ValueError("init type of batchnorm error.\n")
             initer.constant_(m.bias, 0.0)
 
         elif isinstance(m, nn.Linear):
-            if linear == 'kaiming':
+            if linear == "kaiming":
                 initer.kaiming_normal_(m.weight)
-            elif linear == 'xavier':
+            elif linear == "xavier":
                 initer.xavier_normal_(m.weight)
             else:
                 raise ValueError("init type of linear error.\n")
@@ -117,14 +125,14 @@ def init_weights(model, conv='kaiming', batchnorm='normal', linear='kaiming', ls
 
         elif isinstance(m, nn.LSTM):
             for name, param in m.named_parameters():
-                if 'weight' in name:
-                    if lstm == 'kaiming':
+                if "weight" in name:
+                    if lstm == "kaiming":
                         initer.kaiming_normal_(param)
-                    elif lstm == 'xavier':
+                    elif lstm == "xavier":
                         initer.xavier_normal_(param)
                     else:
                         raise ValueError("init type of lstm error.\n")
-                elif 'bias' in name:
+                elif "bias" in name:
                     initer.constant_(param, 0)
 
 
@@ -147,19 +155,20 @@ def group_weight(weight_group, module, lr):
                 group_no_decay.append(m.bias)
     assert len(list(module.parameters())) == len(group_decay) + len(group_no_decay)
     weight_group.append(dict(params=group_decay, lr=lr))
-    weight_group.append(dict(params=group_no_decay, weight_decay=.0, lr=lr))
+    weight_group.append(dict(params=group_no_decay, weight_decay=0.0, lr=lr))
     return weight_group
 
 
 def colorize(gray, palette):
     # gray: numpy array of the label and 1*3N size list palette
-    color = Image.fromarray(gray.astype(np.uint8)).convert('P')
+    color = Image.fromarray(gray.astype(np.uint8)).convert("P")
     color.putpalette(palette)
     return color
 
 
 def find_free_port():
     import socket
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # Binding to port 0 will cause the OS to find an available port for us
     sock.bind(("", 0))
