@@ -12,8 +12,15 @@ import torch.nn.functional as F
 import torch.nn.parallel
 import torch.utils.data
 
-from util import dataset, transform, config
-from util.util import AverageMeter, intersectionAndUnion, check_makedirs, colorize
+import acosp.inject
+from acosp.pruner import SoftTopKPruner
+from util import config, dataset, transform
+from util.util import (
+    AverageMeter,
+    check_makedirs,
+    colorize,
+    intersectionAndUnion,
+)
 
 cv2.ocl.setUseOpenCL(False)
 
@@ -119,6 +126,12 @@ def main():
 
             model = SegNet(classes=args.classes)
         logger.info(model)
+
+        if args.sparse:
+            pruner = SoftTopKPruner(ending_epoch=1, final_sparsity=0.1)
+            pruner.configure_model(model)
+            acosp.inject.soft_to_hard_k(model)
+
         model = torch.nn.DataParallel(model).cuda()
 
         cudnn.benchmark = True

@@ -11,6 +11,8 @@ import torch.nn.functional as F
 import torch.nn.parallel
 import torch.utils.data
 
+import acosp.inject
+from acosp.pruner import SoftTopKPruner
 from util import config
 from util.util import colorize
 
@@ -129,12 +131,18 @@ def predict_directory(
     logger.info(model)
 
     model = torch.nn.DataParallel(model).cpu()
+    if sparse:
+        pruner = SoftTopKPruner(ending_epoch=1, final_sparsity=0.1)
+        pruner.configure_model(model)
+        acosp.inject.soft_to_hard_k(model)
+
     cudnn.benchmark = True
     if os.path.isfile(model_path):
         logger.info("=> loading checkpoint '{}'".format(model_path))
         checkpoint = torch.load(model_path)
         model.load_state_dict(checkpoint["state_dict"])
-        logger.info("=> loaded checkpoint '{}'".format(args.model_path))
+        acosp.inject.hard_to_conv(model)
+        logger.info("=> loaded checkpoint '{}'".format(model_path))
     else:
         raise RuntimeError("=> no checkpoint found at '{}'".format(model_path))
 
@@ -235,7 +243,7 @@ def scale_process(
             count_crop[s_h:e_h, s_w:e_w] += 1
             prediction_crop[s_h:e_h, s_w:e_w, :] += net_process(model, image_crop, mean, std)
     prediction_crop /= np.expand_dims(count_crop, 2)
-    prediction_crop = prediction_crop[pad_h_half : pad_h_half + ori_h, pad_w_half : pad_w_half + ori_w]
+    prediction_crop = prediction_crop[pad_h_half: pad_h_half + ori_h, pad_w_half: pad_w_half + ori_w]
     prediction = cv2.resize(prediction_crop, (w, h), interpolation=cv2.INTER_LINEAR)
     return prediction
 

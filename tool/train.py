@@ -18,8 +18,16 @@ import torch.optim
 import torch.utils.data
 from tensorboardX import SummaryWriter
 
-from util import dataset, transform, config
-from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port
+import acosp.inject
+from acosp.pruner import SoftTopKPruner
+from util import config, dataset, transform
+from util.util import (
+    AverageMeter,
+    cosine_learning_rate,
+    find_free_port,
+    intersectionAndUnionGPU,
+    poly_learning_rate,
+)
 
 cv2.ocl.setUseOpenCL(False)
 cv2.setNumThreads(0)
@@ -120,6 +128,26 @@ def main():
 def main_worker(gpu, ngpus_per_node, argss):
     global args
     args = argss
+
+    if hasattr(args, "sparsity"):
+        args.sparsity = float(args.sparsity)
+        assert 0 <= args.sparsity < 1
+    else:
+        args.sparsity = 0
+        args.starting_epoch = 0
+        args.ending_epoch = 0
+
+    if not hasattr(args, "learnable_weights"):
+        args.learnable_weights = True
+
+    pruner = SoftTopKPruner(
+        starting_epoch=args.starting_epoch,
+        ending_epoch=args.ending_epoch,
+        final_sparsity=args.sparsity,
+        active=args.sparsity > 0,
+        learnable_weights=args.learnable_weights,
+    )
+
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
             args.rank = int(os.environ["RANK"])
@@ -142,6 +170,7 @@ def main_worker(gpu, ngpus_per_node, argss):
             zoom_factor=args.zoom_factor,
             criterion=criterion,
         )
+        pruner.configure_model(model)
 
         modules_ori = [
             model.layer0,
@@ -157,7 +186,7 @@ def main_worker(gpu, ngpus_per_node, argss):
         from model.segnet import SegNet
 
         model = SegNet(classes=args.classes, criterion=criterion)
-        modules_new = [model.psa, model.cls, model.aux]
+        pruner.configure_model(model)
 
         modules_ori = [
             model.down1,
@@ -311,6 +340,13 @@ def main_worker(gpu, ngpus_per_node, argss):
         )
 
     for epoch in range(args.start_epoch, args.epochs):
+        if epoch == pruner.ending_epoch:
+
+            acosp.inject.soft_to_hard_k(model)
+
+            if hasattr(args, "refill_pruned") and args.refill_pruned:
+                acosp.inject.hard_to_conv(model, reinitialize=True)
+
         epoch_log = epoch + 1
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -343,6 +379,13 @@ def main_worker(gpu, ngpus_per_node, argss):
                 writer.add_scalar("mAcc_val", mAcc_val, epoch_log)
                 writer.add_scalar("allAcc_val", allAcc_val, epoch_log)
 
+        if args.sparsity > 0 and main_process():
+            pruner.collect_logs(logger, model, epoch)
+        pruner.update_mask_layers(model, epoch)
+
+    # At end of training ensure pruned network
+    if pruner.active:
+        acosp.inject.soft_to_hard_k(model)
 
     filename = args.save_path + "/train_epoch_" + str(args.epochs) + ".pth"
     logger.info("Saving checkpoint to: " + filename)
