@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import logging
 import argparse
+from pandas.core.indexes import base
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -26,6 +27,7 @@ from util import dataset, transform, config
 from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port
 
 from model.pspnet_c import PSPNetClassification
+from model.resnet_dist import ResNetDist
 
 from sklearn.metrics import roc_auc_score
 
@@ -40,7 +42,7 @@ std = [item * value_scale for item in std]
 
 data_root = "dataset/ade20k"
 train_list = "dataset/ade20k/list/training.txt"
-batch_size = 16
+batch_size = 8
 valid_list = "dataset/ade20k/list/validation.txt"
 epochs=5
 n_classes = 150
@@ -107,10 +109,13 @@ def train(train_loader, model, optimizer, epoch):
         seg_target = seg_target.cuda(non_blocking=True)
         class_target = [ct.float().cuda(non_blocking=True) for ct in class_target]
         input = input.cuda(non_blocking=True)
-        target = (seg_target, class_target)
+        target = seg_target, class_target
         segmentation, distributions, main_loss, aux_loss, distributions_loss = model(input, target)
-        main_loss, aux_loss, class_loss = torch.mean(main_loss), torch.mean(aux_loss), torch.mean(distributions_loss)
-        loss = class_loss
+        main_loss, aux_loss, distributions_loss = torch.mean(main_loss), torch.mean(aux_loss), torch.mean(distributions_loss)
+        loss = distributions_loss
+
+        # distributions, loss = model(input, target)
+        # loss = torch.mean(loss)
 
         optimizer.zero_grad()
         loss.backward()
@@ -119,7 +124,7 @@ def train(train_loader, model, optimizer, epoch):
         n = input.size(0)
         dist_metric = distribution_distance(class_target, distributions)
 
-        print(f'Batch {i+1}/{len(train_loader)}, Loss: {class_loss}, Distance {dist_metric[0]/batch_size}')
+        print(f'Batch {i+1}/{len(train_loader)}, Loss: {loss}, Distance {dist_metric[0]/(batch_size)}')
 
 def validate(model):
     val_transform = transform.Compose([
@@ -137,18 +142,19 @@ def validate(model):
     end = time.time()
     for i, (input, target) in tqdm(enumerate(val_loader)):
         data_time.update(time.time() - end)
-        seg_target, class_target = target
+        seg_target, class_targets = target
         seg_target = seg_target.cuda(non_blocking=True)
-        class_target = [ct.float().cuda(non_blocking=True) for ct in class_target]
+        class_targets = [ct.float().cuda(non_blocking=True) for ct in class_targets]
         input = input.cuda(non_blocking=True)
         # target = (seg_target, class_target)
         # seg_target = seg_target.cuda(non_blocking=True)
         # class_target = [ct.float().cuda(non_blocking=True) for ct in class_target]
         # input = input.cuda(non_blocking=True)
         # target = (seg_target, class_target)
-        segmentation, distributions = model(input, seg_target)
+        segmentation, distributions = model(input, class_targets)
+        # distributions = model(input, seg_target)
 
-        dist_metric = distribution_distance(class_target, distributions)
+        dist_metric = distribution_distance(class_targets, distributions)
 
         metrics.append(dist_metric)
 
@@ -157,13 +163,21 @@ def validate(model):
 
 def main():
     model = PSPNetClassification(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth").to("cuda")
-    # checkpoint = torch.load("/home/connor/Dev/semseg/classification_v2_ep5.pth")['state_dict']
+    # checkpoint = torch.load("/home/connor/Dev/semseg/distributions0451.pth")['state_dict']
     # model.load_state_dict(checkpoint)
+    # model = ResNetDist(size=2).to("cuda")
+    # modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
+    # modules_new = [model.cls]
+    # params_list = []
+    base_lr = 1e-3
+    # for module in modules_ori:
+    #     params_list.append(dict(params=module.parameters(), lr=base_lr))
+    # for module in modules_new:
+    #     params_list.append(dict(params=module.parameters(), lr=base_lr*10))
     # params_list = [dict(params=model.classification_head.parameters(), lr=1e-2)]
-    lr = 1e-3
-    params = [dict(params=c[1].parameters(), lr=lr) for c in model.pred.named_children() if c[0] != 'cls']
-    # new_params = [model.pred.]
-    optimizer = torch.optim.Adam(params=params, lr=lr, weight_decay=1e-4)
+    params_list = [dict(params=c[1].parameters(), lr=base_lr) for c in model.pred.named_children() if c[0] != 'cls']
+
+    optimizer = torch.optim.Adam(params_list, lr=base_lr,weight_decay=1e-4)
 
     train_transform = transform.Compose([
     transform.RandScale([0.5, 2.0]),
@@ -180,6 +194,8 @@ def main():
         train(train_loader, model, optimizer, epoch)
         val_metric = validate(model)
         val_results.append(val_metric)
+        
+       
         # val_auc = validate(model)
         # val_results.append(val_auc)
         

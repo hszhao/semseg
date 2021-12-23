@@ -16,14 +16,18 @@ import torch.utils.data
 import torch.multiprocessing as mp
 import torch.distributed as dist
 
+import matplotlib.pyplot as plt
+
 import sys, os
 sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(1, os.path.abspath('..'))
 
 from util import dataset, transform, config
-from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port
+from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port, colorize
+from util.classification_utils import extract_mask_distributions
 
 from model.pspnet_agg import PSPNetAggregation
+import seaborn as sns
 
 from sklearn.metrics import roc_auc_score
 
@@ -39,7 +43,7 @@ std = [item * value_scale for item in std]
 data_root = "dataset/ade20k"
 train_list = "dataset/ade20k/list/training.txt"
 valid_list = "dataset/ade20k/list/validation.txt"
-batch_size = 16
+batch_size = 1
 epochs = 15
 n_classes = 150
 
@@ -187,27 +191,25 @@ def validate(model):
     ious2 = []
     accs2 = []
 
-    logit_1 = []
-    logit_2 = []
-    prob_1 = []
-    dist = []
+    dist_pred_baseline = []
+    dist_pred_trained = []
+    dist_targets = []
     for i, (input, target) in enumerate(val_loader):
         seg_target, dist_target = target
         data_time.update(time.time() - end)
         input = input.cuda(non_blocking=True)
         seg_target = seg_target.cuda(non_blocking=True)
         dist_target = dist_target[0]
+        dist_targets.append(dist_target)
         dist_target = dist_target.cuda(non_blocking=True)
-        output, output_alt = model(input, distributions=dist_target)
+        output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=dist_target)
+        predicted_distribution = predicted_distribution[0]
 
-        # seg_target_mask = torch.where(seg_target == 255, output.max(1)[1], seg_target)
-        # seg_onehot = nn.functional.one_hot(seg_target_mask, num_classes=150).float().permute(0, 3, 1, 2)
-        # pixel_dist = nn.AdaptiveAvgPool2d((60, 60))(seg_onehot)
-        # dist.append(pixel_dist)
-
-        # logit_1.append(logits[-1])
-        # logit_2.append(nn.ReLU()(logits[-1]))
-        # prob_1.append(nn.Sigmoid()(logits[-1]))
+        dist_pred_trained.append(predicted_distribution)
+        
+        dist_baseline = nn.Softmax(dim=1)(output)
+        dist_baseline = nn.AdaptiveAvgPool2d((1,1))(dist_baseline)
+        dist_pred_baseline.append(dist_baseline)
 
         n = input.size(0)
 
@@ -232,10 +234,139 @@ def validate(model):
         batch_time.update(time.time() - end)
         end = time.time()
 
-    # logit_1 = torch.stack([x.cpu() for x in logit_1]) 
-    # logit_2 =torch.stack([x.cpu() for x in logit_2]) 
-    # prob_1 = torch.stack([x.cpu() for x in prob_1]) 
-    # dist = torch.stack([x.cpu() for x in dist]) 
+    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
+    accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
+    mIoU = np.mean(iou_class)
+    mAcc = np.mean(accuracy_class)
+    allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
+    print('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+
+    iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
+    accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
+    mIoU2 = np.mean(iou_class2)
+    mAcc2 = np.mean(accuracy_class2)
+    allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
+    print('Val result2: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
+    return mIoU, mAcc, allAcc
+
+def get_unnormalized_image(image):
+    input_image_viz = image.squeeze().permute((1, 2, 0)).cpu()
+    input_image_viz = input_image_viz * torch.tensor(std)
+    input_image_viz = input_image_viz + torch.tensor(mean)
+    input_image_viz = input_image_viz.cpu().numpy().astype(np.uint8)
+    return input_image_viz
+
+def validate_visualization(model):
+    val_transform = transform.Compose([
+        transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
+        transform.ToTensor(),
+        transform.Normalize(mean=mean, std=std)])
+    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, classification_heads_x=False, classification_heads_y=True)
+    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None)
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    intersection_meter = AverageMeter()
+    union_meter = AverageMeter()
+    target_meter = AverageMeter()
+    intersection_meter2 = AverageMeter()
+    union_meter2 = AverageMeter()
+    target_meter2 = AverageMeter()
+
+    model.eval()
+    end = time.time()
+    ious = []
+    accs = []
+    ious2 = []
+    accs2 = []
+
+    dist_pred_baseline = []
+    dist_pred_trained = []
+    dist_targets = []
+    for i, (input, target) in enumerate(val_loader):
+        seg_target, dist_target = target
+        data_time.update(time.time() - end)
+        input = input.cuda(non_blocking=True)
+        seg_target = seg_target.cuda(non_blocking=True)
+        dist_target = dist_target[0]
+        dist_targets.append(dist_target)
+        dist_target = dist_target.cuda(non_blocking=True)
+        output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=dist_target)
+        predicted_distribution = predicted_distribution[0]
+
+        # colors = np.loadtxt("/home/connor/Dev/semseg/data/ade20k/ade20k_colors.txt").astype('uint8')
+        # fig, axes = plt.subplots(2, 5, figsize=(12, 14))
+        # viz_image = get_unnormalized_image(input)
+        # gt_seg = colorize(seg_target.squeeze().cpu().numpy().astype(np.uint8), colors)
+        # prediction_reg = colorize(output.max(1)[1].squeeze().cpu().numpy().astype(np.uint8), colors)
+        # prediction_alt = colorize(output_alt.max(1)[1].squeeze().cpu().numpy().astype(np.uint8), colors)
+        # prediction_alt_gt = colorize(output_alt_gt.max(1)[1].squeeze().cpu().numpy().astype(np.uint8), colors)
+        # axes[0][0].imshow(viz_image)
+        # axes[0][0].set_title("Input Image")
+        # axes[0][1].imshow(gt_seg)
+        # axes[0][1].set_title("Ground Truth Segmentation")
+        # axes[0][2].imshow(prediction_reg)
+        # axes[0][2].set_title("Baseline PSPNet Segmentation")
+        # axes[0][3].imshow(prediction_alt)
+        # axes[0][3].set_title("PSPNet Segmentation + DistFix")
+        # axes[0][4].imshow(prediction_alt_gt)
+        # axes[0][4].set_title("PSPNet Segmentation + DistFix w/GT Labels")
+
+        # dist_pred_trained.append(predicted_distribution)
+        # predictions = set(np.unique(output.max(1)[1].squeeze().cpu().numpy()))
+        # p2 = set(np.unique(output_alt.max(1)[1].squeeze().cpu().numpy())) 
+        # p3 = set(np.unique(output_alt_gt.max(1)[1].squeeze().cpu().numpy()))
+        # predictions.update(p2)
+        # predictions.update(p3)
+
+        # N_CLASS length vectors 
+        dist_label = dist_target.squeeze().cpu().numpy()
+        dist_baseline = extract_mask_distributions(output.max(1)[1].squeeze().cpu(), head_sizes=[1])[0].squeeze()
+        dist_fix = extract_mask_distributions(output_alt.max(1)[1].squeeze().cpu(), head_sizes=[1])[0].squeeze()
+        dist_fix_gt = extract_mask_distributions(output_alt_gt.max(1)[1].squeeze().cpu(), head_sizes=[1])[0].squeeze()
+
+        # ERROR
+        baseline_err = np.sum(np.abs(dist_label - dist_baseline))
+        fix_err = np.sum(np.abs(dist_label - dist_fix))
+        fix_gt_err = np.sum(np.abs(dist_label - dist_fix_gt))
+
+        # predictions = list(predictions)
+        # sns.barplot(x=[n for n in predictions], y=np.take(dist_label, [predictions], 0)[0], ax=axes[1][1])
+        # sns.barplot(x=[n for n in predictions], y=np.take(dist_baseline, [predictions], 0)[0], ax=axes[1][2])
+        # axes[1][2].set_xlabel(f"Distance: {np.round(baseline_err, decimals=2)}")
+        # sns.barplot(x=[n for n in predictions], y=np.take(dist_fix, [predictions], 0)[0], ax=axes[1][3])
+        # axes[1][3].set_xlabel(f"Distance: {np.round(fix_err, decimals=2)}")
+        # sns.barplot(x=[n for n in predictions], y=np.take(dist_fix_gt, [predictions], 0)[0], ax=axes[1][4])
+        # axes[1][4].set_xlabel(f"Distance: {np.round(fix_gt_err, decimals=2)}")
+
+        # plt.savefig(f"samples/sample{i}.png")
+        # plt.clf()
+
+        # dist_pred_baseline.append(dist_baseline)
+
+        n = input.size(0)
+
+        output = output.max(1)[1]
+        intersection, union, target = intersectionAndUnionGPU(output, seg_target, 150, 255)
+        
+        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
+        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
+
+        ious.append(intersection / (union + 1e-10))
+        accs.append(intersection / (target + 1e-10))
+
+        output_alt_gt = output_alt_gt.max(1)[1]
+        intersection2, union2, target2 = intersectionAndUnionGPU(output_alt_gt, seg_target, 150, 255)
+        
+        intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
+        intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
+
+        ious2.append(intersection2 / (union2 + 1e-10))
+        accs2.append(intersection2 / (target2 + 1e-10))
+
+        batch_time.update(time.time() - end)
+        end = time.time()
+        # if i > 30:
+        #     break
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
@@ -256,7 +387,7 @@ def main(model):
     learning_rate = 1e-3
     # params_list = [dict(params=model.channel_weights.parameters(), lr=learning_rate)]
     # optimizer = torch.optim.SGD(params_list, lr=1e-2, momentum=0.9, weight_decay=1e-4)
-    optimizer = torch.optim.Adam(lr=learning_rate, weight_decay=1e-4)
+    # optimizer = torch.optim.Adam(lr=learning_rate, weight_decay=1e-4)
     train_epochs = [ ]
     val_epochs = [ ]
     train_transform = transform.Compose([
@@ -270,10 +401,12 @@ def main(model):
     train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, classification_heads_x=True, classification_heads_y=False)
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, sampler=None, drop_last=True)
     for epoch in range(0, epochs):
-        # mIoU, mAcc, allAcc = validate(model)
-        # val_epochs.append((mIoU, mAcc, allAcc))
-        _, t_mIoU, t_mAcc, t_allAcc = train(train_loader, model, optimizer, epoch)
-        train_epochs.append((t_mIoU, t_mAcc, t_allAcc))
+        #mIoU, mAcc, allAcc = validate(model)
+        validate_visualization(model)
+        break
+        #val_epochs.append((mIoU, mAcc, allAcc))
+        # _, t_mIoU, t_mAcc, t_allAcc = train(train_loader, model, optimizer, epoch)
+        # train_epochs.append((t_mIoU, t_mAcc, t_allAcc))
         
     # torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"exp/ade20k/pspnet50/model/asdfasdf.pth")
     return val_epochs
@@ -303,7 +436,7 @@ if __name__ == "__main__":
     # Train 6505/0.7651/0.8962
     # Val 0.4134/0.5269/0.7936
     # 0.4183/0.5376/0.7945
-    model_conv = PSPNetAggregation(pspnet_weights="distributions_ae.pth").to("cuda")
+    model_conv = PSPNetAggregation(pspnet_weights="distributions_weighted.pth").to("cuda")
     val_hist_conv = main(model_conv)
     print(val_hist_conv)
 

@@ -5,9 +5,10 @@ import torch.nn.functional as F
 
 from collections import OrderedDict
 
-# import sys, os
-# sys.path.insert(0, os.path.abspath('.'))
+import sys, os
+sys.path.insert(0, os.path.abspath('.'))
 from model.pspnet_c import PSPNetClassification
+from util.classification_utils import extract_mask_distributions
 
 class ClassificationLogitCombination(nn.Module):
     def __init__(self, classes=150, agg_dim=(6,6)):
@@ -43,17 +44,24 @@ class DistributionMatch(nn.Module):
     def __init__(self):
         super(DistributionMatch, self).__init__()
 
-    def forward(self, features, distribution):
-        scale = distribution[0].shape[3]  # e.g. 1x1 .. 6x6
+    def forward(self, features, predicted_distribution, gt_distribution=None):
+        scale = predicted_distribution[0].shape[3]  # e.g. 1x1 .. 6x6
         softmax = nn.Softmax(dim=1)(features)
-        prediction_area = (features.size()[2]/scale) * (features.size()[3]/scale)
-        prediction_pool = nn.AvgPool2d(kernel_size=features.size()[3] // scale, divisor_override=1)(softmax)
-        predicted_distribution = prediction_pool / prediction_area
-        correction = distribution[0] - predicted_distribution
-        if scale != 1:
-            correction = F.interpolate(correction, size=softmax.size()[2:], mode="nearest")
+        softmax_distribution = nn.AdaptiveAvgPool2d((scale, scale))(softmax)
+        correction = predicted_distribution[0] - softmax_distribution
+        correction = F.interpolate(correction, size=softmax.size()[2:], mode="nearest")
+        corrected_softmax = softmax + correction
+        corrected_softmax = corrected_softmax / corrected_softmax.sum(axis=1, keepdims=True)
 
-        return softmax + correction
+        corrected_softmax_gt = None
+        if gt_distribution is not None:
+            # METHOD 1 - APPLY UNIFORM CORRECTION ACROSS SOFTMAX MAP
+            gt_correction = gt_distribution[0] - softmax_distribution
+            gt_correction = F.interpolate(gt_correction, size=softmax.size()[2:], mode="nearest")
+            corrected_softmax_gt = softmax + gt_correction
+            corrected_softmax_gt = corrected_softmax_gt / corrected_softmax_gt.sum(axis=1, keepdims=True)
+
+        return corrected_softmax, corrected_softmax_gt
 
 class PSPNetAggregation(nn.Module):
     """
@@ -89,17 +97,23 @@ class PSPNetAggregation(nn.Module):
 
         x_tmp = self.pspnet.pspnet.ppm(x)
 
-        x, distributions, ae_loss = self.pspnet.pred(x_tmp, scales=[1])
+        x, distributions_pred, _ = self.pspnet.pred(x_tmp, scale=1)
         
-        x_alt = self.combo(x, distributions)
+        x_alt, x_alt_gt = self.combo(x, distributions_pred, [distributions])
 
         if self.zoom_factor != 1:
             x = F.interpolate(x, size=(h, w), mode='bilinear', align_corners=True)
             x_alt = F.interpolate(x_alt, size=(h, w), mode='bilinear', align_corners=True)
+            x_alt_gt = F.interpolate(x_alt_gt, size=(h, w), mode='bilinear', align_corners=True)
+        
+        # softmax = nn.Softmax(dim=1)(x)
+        # prediction_area = (softmax.size()[2]) * (softmax.size()[3])
+        # prediction_pool = nn.AvgPool2d(kernel_size=softmax.size()[3], divisor_override=1)(softmax)
+        # predicted_distribution = prediction_pool / prediction_area
 
         if self.training:
             segmentation_label = y
             main_loss = self.pspnet.pspnet.criterion(x_alt, segmentation_label)
             return x_alt.max(1)[1], main_loss
         else:
-            return x, x_alt
+            return x, x_alt, x_alt_gt, distributions_pred, distributions
