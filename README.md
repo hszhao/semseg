@@ -83,7 +83,7 @@ if epoch == pruner.ending_epoch:
 
 1. Highlight:
 
-    - All initialization models, trained models are [available](MISSINGLINK).
+    - All initialization models, trained models are [available](https://console.cloud.google.com/storage/browser/public-acosp-data).
       The structure is:
       ```
       | init/  # initial models
@@ -107,7 +107,7 @@ if epoch == pruner.ending_epoch:
       ln -s /path_to_ade20k_dataset /data/ade20k
       ```
 
-    - Download ImageNet pre-trained [models]((MISSINGLINK)) and put them under folder `/data` for weight
+    - Download ImageNet pre-trained [models](https://console.cloud.google.com/storage/browser/public-acosp-data/init) and put them under folder `/data` for weight
       initialization. Remember to use the right dataset format detailed in [FAQ.md](./FAQ.md).
 
     - Specify the gpu used in config then do training.  (Training using acosp have only been carried out on a single
@@ -143,7 +143,7 @@ if epoch == pruner.ending_epoch:
 
 6. Other:
 
-    - Resources: GoogleDrive [LINK](MISSINGLINK) contains shared models, visual predictions and data lists.
+    - Resources: GoogleDrive [LINK](https://console.cloud.google.com/storage/browser/public-acosp-data/init) contains shared models, visual predictions and data lists.
     - Models: ImageNet pre-trained models and trained segmentation models can be accessed. Note that our ImageNet
       pretrained models are slightly different from
       original [ResNet](https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py) implementation in
