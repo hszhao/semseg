@@ -75,3 +75,7 @@ dataset/
 *.yaml
 slurm*
 initmodel
+
+*.egg-info
+build
+dist
