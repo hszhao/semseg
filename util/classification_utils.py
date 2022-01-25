@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 N_CLASSES = 150
 
@@ -52,27 +53,62 @@ def vector_list_to_mat(vectors):
     rows.append(curr_row)
     return np.asarray(rows)
 
-def extract_mask_distributions(mask, head_sizes=[1]):
+def extract_mask_distributions(mask, head_sizes=[1], top_k=5, predicted_mask=None):
     """
-    annotation mask --> set of head_sizes x head_sizes matrices with one-hot class labels
-    encoding distribution of classes present at that region
+    mask: ground truth annotation
+    head_sizes: list of scales at which to extract the distribution of pixels for each class
+    top_k: limit # of classes, note even with k < C the distribution will add up to 1
+    predicted_mask: if supplied, take the top classes from the predicted segmentation mask rather than ground truth annotation
+    """
+    dist_labels = []
+    for s in head_sizes:
+        mat = extract_mask_distribution(mask, s)
+        class_order = (-mat.flatten()).argsort()
+        if predicted_mask is not None:
+            pred_dist = extract_mask_distribution(predicted_mask, s)
+            class_order = (-pred_dist.flatten()).argsort()
+        class_mask = np.where(np.in1d(np.arange(150), class_order[:top_k]), np.ones(150), np.zeros(150))
+        class_mask = np.expand_dims(np.expand_dims(class_mask, -1), -1)
+        masked_dist = class_mask * mat 
+        masked_dist /= (np.sum(masked_dist, axis=None) + 1e-10)
+    
+        dist_labels.append(masked_dist)
+
+    return dist_labels
+
+def extract_mask_distribution(mask, scale=1):
+    """
+    annotation --> pixel distribution at specified scales
+    ignores background pixels (255)
     """
     onehot = (np.arange(255+1) == mask.numpy()[...,None]).astype(int)
     onehot_ignore = onehot[:,:,:N_CLASSES]
-    dist_labels = []
-    for s in head_sizes:
-        if s == 1: # special case
-            mat = arr_to_dist(onehot_ignore)
-            mat = np.expand_dims(mat, -1)
-            mat = np.expand_dims(mat, -1)
-        else:
-            quadrants = mask_to_subgrids(onehot_ignore, s)
-            mat_vecs = [ arr_to_dist(m) for m in quadrants ]
-            mat = vector_list_to_mat(mat_vecs).astype(np.float32)
-            mat = mat.transpose(2, 0, 1)
-        dist_labels.append(mat)
+    if scale == 1: # special case
+        mat = arr_to_dist(onehot_ignore)
+        mat = np.expand_dims(mat, -1)
+        mat = np.expand_dims(mat, -1)
+    else:
+        quadrants = mask_to_subgrids(onehot_ignore, scale)
+        mat_vecs = [ arr_to_dist(m) for m in quadrants ]
+        mat = vector_list_to_mat(mat_vecs).astype(np.float32)
+        mat = mat.transpose(2, 0, 1)
+    return mat
 
-    return dist_labels
+
+def extract_adjusted_distribution(gt_mask, predicted_mask, head_sizes=[1], top_k=150):
+    """
+    given ground truth annotation mask, and a trained segmentation network prediction,
+    compute the distribution of the 'corrected' mask, s.t. pixels are equal to the 
+    ground truth label if non-background, and predicted label if background
+
+    this may offer a better training objective for the distribution of pixels for images
+    with large portions of background class
+    """
+    gt_mask = gt_mask
+    predicted_mask = predicted_mask
+    corrected_mask = torch.where(gt_mask == 255, predicted_mask, gt_mask).cpu()
+    corrected_distributions = [ extract_mask_distributions(corrected_mask[i], head_sizes=head_sizes) for i in range(corrected_mask.size()[0]) ]
+    return corrected_distributions
 
 
 def extract_mask_classes(mask, head_sizes=[1, 2, 3, 6]):

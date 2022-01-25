@@ -125,8 +125,8 @@ def main_worker(gpu, ngpus_per_node, argss, fine_tune=False, classification_x=Fa
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.ppm, model.cls, model.aux]
     elif args.arch == 'psp_c':
-        from model.pspnet_c import PSPNetClassification
-        model = PSPNetClassification(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, pspnet_weights=None)
+        from model.pspnet_c import PSPNetContext
+        model = PSPNetContext(layers=args.layers, classes=args.classes, zoom_factor=args.zoom_factor, pspnet_weights=None)
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.ppm, model.cls, model.aux]
     elif args.arch == 'psa':

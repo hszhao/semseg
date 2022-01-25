@@ -50,12 +50,14 @@ def make_dataset(split='train', data_root=None, data_list=None):
 
 
 class SemData(Dataset):
-    def __init__(self, split='train', classification_heads_x=False, classification_heads_y=False, data_root=None, data_list=None, transform=None):
+    def __init__(self, split='train', context_x=False, context_y=False, context_type="classification", data_root=None, data_list=None, transform=None):
+        assert context_type in ["classification", "distribution", "both"]
         self.split = split
         self.data_list = make_dataset(split, data_root, data_list)
         self.transform = transform
-        self.classification_heads_x = classification_heads_x
-        self.classification_heads_y = classification_heads_y
+        self.context_x = context_x
+        self.context_y = context_y
+        self.context_type = context_type
 
     def __len__(self):
         return len(self.data_list)
@@ -71,10 +73,15 @@ class SemData(Dataset):
             raise (RuntimeError("Image & label shape mismatch: " + image_path + " " + label_path + "\n"))
         if self.transform is not None:
             image, label = self.transform(image, label)
-        if self.classification_heads_x or self.classification_heads_y:
-            gt_heads = extract_mask_distributions(label)
-            if self.classification_heads_x:
-                image = (image, gt_heads)
-            if self.classification_heads_y:
-                label = (label, gt_heads)
+        if self.context_x or self.context_y:
+            if self.context_type == "classification":
+                context = extract_mask_classes(label)
+            elif self.context_type == "distribution":
+                context = extract_mask_distributions(label)
+            elif self.context_type == "both":
+                context = (extract_mask_classes(label, head_sizes=[1]), extract_mask_distributions(label, head_sizes=[1]))
+            if self.context_x:
+                image = (image, context)
+            if self.context_y:
+                label = (label, context)
         return image, label

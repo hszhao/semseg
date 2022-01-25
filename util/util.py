@@ -174,7 +174,7 @@ def find_free_port():
 # import sys, os
 # sys.path.insert(0, os.path.abspath('.'))
 # sys.path.insert(1, os.path.abspath('..'))
-# from model.pspnet_c import PSPNetClassification
+# from model.pspnet_c import PSPNetContext
 # from model.pspnet import PSPNet
 
 # from classification_utils import extract_mask_classes
@@ -306,7 +306,7 @@ def find_free_port():
 #     # return
 
 # if __name__ == "__main__":
-#     pspnet = PSPNetClassification(layers=50, classes=150, zoom_factor=8, pspnet_weights=None).to("cuda")
+#     pspnet = PSPNetContext(layers=50, classes=150, zoom_factor=8, pspnet_weights=None).to("cuda")
 #     checkpoint = torch.load(pspnet_weights)['state_dict']
 #     image = cv2.imread(filepath)
 #     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -336,7 +336,7 @@ def find_free_port():
 #         new_seg_1 = new_pre_softmax_1.max(0)[1].numpy()
 #         i = colorize(new_seg_1, palette)
 #         axes[a+1].imshow(i)
-#         axes[a+1].set_title(f"Classification Bias (a={alphas[a]})")
+#         axes[a+1].set_title(f"Context Bias (a={alphas[a]})")
 #         axes[a+1].axis("off")
 #         if alphas[a] == 0:
 #             axes[a+1].set_title("Original Prediction (a=0)")

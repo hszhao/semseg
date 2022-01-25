@@ -24,9 +24,15 @@ sys.path.insert(1, os.path.abspath('..'))
 
 from util import dataset, transform, config
 from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port, colorize
-from util.classification_utils import extract_mask_distributions
+from util.classification_utils import extract_mask_distributions, extract_adjusted_distribution
+from tool.test import multiscale_prediction
+from tool.visualization import dist_prediction_visualization, cam
 
 from model.pspnet_agg import PSPNetAggregation
+from model.pencnet import PyramidEncodingNetwork
+from model.encnet import EncNet
+from model.fcn import FCN
+
 import seaborn as sns
 
 from sklearn.metrics import roc_auc_score
@@ -44,7 +50,7 @@ data_root = "dataset/ade20k"
 train_list = "dataset/ade20k/list/training.txt"
 valid_list = "dataset/ade20k/list/validation.txt"
 batch_size = 1
-epochs = 15
+epochs = 10
 n_classes = 150
 
 def mean_auc(classification_labels, classification_predictions):
@@ -60,8 +66,8 @@ def mean_auc(classification_labels, classification_predictions):
         # loop over n_classes
         for c in range(n_classes):
             # loop over spatial predictions
-            for x in range(y_true.shape[3]):
-                for y in range(y_true.shape[3]):
+            for x in range(y_true.shape[-1]):
+                for y in range(y_true.shape[-1]):
                     if len(np.unique(y_true[:,c,x,y])) == 2:
                         bin_vec_true = y_true[:,c,x,y]
                         bin_vec_pred = y_pred[:,c,x,y]
@@ -76,6 +82,19 @@ def mean_auc(classification_labels, classification_predictions):
     # return mean auc of classes present in the batch
     mean_auc_batch = np.mean(class_mean_aucs)
     return mean_auc_batch
+    
+def debug(data_loader, model, i=5):
+    """
+    run visualization fn (e.g. CAM) on ith input of data loader
+    """
+    model.eval()
+    for idx, (input, target) in enumerate(data_loader):
+        input = input.cuda(non_blocking=True)
+        seg_target, class_target = target
+        seg_target = seg_target.cuda(non_blocking=True)
+        if idx == i:
+            cam(model, input, seg_target)
+            break
     
 
 def train(train_loader, model, optimizer, epoch):
@@ -93,33 +112,42 @@ def train(train_loader, model, optimizer, epoch):
     max_iter = epochs * len(train_loader)
     for i, (input, target) in enumerate(train_loader):
         data_time.update(time.time() - end)
-        input, classifications = input
-        classifications = [ct.float().cuda(non_blocking=True) for ct in classifications]
-        seg_target = target
-        # seg_target, class_target = target
-        seg_target = seg_target.cuda(non_blocking=True)
-        # class_target = [ct.float().cuda(non_blocking=True) for ct in class_target]
+        #input, classifications = input
+        # classifications = [ct.float().cuda(non_blocking=True) for ct in classifications]
+        # seg_target = target
         input = input.cuda(non_blocking=True)
-        segmentation, main_loss = model(x=input, y=seg_target, classifications=classifications)
-        # segmentation, classification, main_loss, aux_loss, classification_loss = model(input, target)
-        main_loss = torch.mean(main_loss)
-        loss = main_loss
+        
+        seg_target, context_target = target
+        seg_target = seg_target.cuda(non_blocking=True)
+        context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
+        context_target = context_target[0] # only care single scale
+        # segmentation, main_loss = model(x=input, y=seg_target, classifications=classifications)
+        # segmentation, aux, classification, main_loss = model(input, seg_target)
+        # segmentation, classifications, main_loss, aux_loss, class_loss = model(input, [seg_target, context_target])
+        segmentation, loss = model(input, [seg_target, context_target])
+        # loss = class_loss # torch.mean(main_loss + (0.5 * class_loss) + (0.4 * aux_loss))
 
-        # optimizer.zero_grad()
-        # loss.backward()
-        # optimizer.step()
+        # segmentation, main_loss = model(input, seg_target, distributions=context_target[0])
+        loss = torch.mean(loss)
+        #loss.requires_grad = True
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
         n = input.size(0)
 
+        # segmentation = segmentation.max(1)[1]
+
         intersection, union, target = intersectionAndUnionGPU(segmentation, seg_target, 150, 255)
 
-        # auc = mean_auc(class_target, classification)
+        # auc = mean_auc(context_target, classifications)
 
         intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
         intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
 
         accuracy = sum(intersection_meter.val) / (sum(target_meter.val) + 1e-10)
-        main_loss_meter.update(main_loss.item(), n)
+        main_loss_meter.update(loss.item(), n)
         # aux_loss_meter.update(aux_loss.item(), n)
         loss_meter.update(loss.item(), n)
         batch_time.update(time.time() - end)
@@ -127,9 +155,10 @@ def train(train_loader, model, optimizer, epoch):
 
         current_iter = epoch * len(train_loader) + i + 1
         current_lr = poly_learning_rate(1e-2, current_iter, max_iter, power=0.9)
-        for index in range(0, 1):
-            optimizer.param_groups[index]['lr'] = current_lr
-        # for index in range(args.index_split, len(optimizer.param_groups)):
+        # NEW_MODULES = 7
+        # for index in range(0, NEW_MODULES):
+        #     optimizer.param_groups[index]['lr'] = current_lr * 10
+        # for index in range(NEW_MODULES, len(optimizer.param_groups)):
         #     optimizer.param_groups[index]['lr'] = current_lr * 10
         remain_iter = max_iter - current_iter
         remain_time = remain_iter * batch_time.avg
@@ -147,13 +176,15 @@ def train(train_loader, model, optimizer, epoch):
                 'Remain {remain_time} '
                 'MainLoss {main_loss_meter.val:.4f} '
                 'Loss {loss_meter.val:.4f} '
-                'Accuracy {accuracy:.4f}.'.format(epoch+1, epochs, i + 1, len(train_loader),
+                'Accuracy {accuracy:.4f}. '
+                'mauc {auc:.4f}'.format(epoch+1, epochs, i + 1, len(train_loader),
                                                     batch_time=batch_time,
                                                     data_time=data_time,
                                                     remain_time=remain_time,
                                                     main_loss_meter=main_loss_meter,
                                                     loss_meter=loss_meter,
-                                                    accuracy=accuracy))
+                                                    accuracy=accuracy,
+                                                    auc=0))
     
         print('loss_train_batch', main_loss_meter.val, current_iter)
         print('mIoU_train_batch', np.mean(intersection / (union + 1e-10)), current_iter)
@@ -173,7 +204,7 @@ def validate(model):
         transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
-    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, classification_heads_x=False, classification_heads_y=True)
+    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, context_x=False, context_y=True, context_type="distribution")
     val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None)
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -183,6 +214,9 @@ def validate(model):
     intersection_meter2 = AverageMeter()
     union_meter2 = AverageMeter()
     target_meter2 = AverageMeter()
+    intersection_meter3 = AverageMeter()
+    union_meter3 = AverageMeter()
+    target_meter3 = AverageMeter()
 
     model.eval()
     end = time.time()
@@ -190,30 +224,39 @@ def validate(model):
     accs = []
     ious2 = []
     accs2 = []
+    ious3 = []
+    accs3 = []
 
-    dist_pred_baseline = []
-    dist_pred_trained = []
-    dist_targets = []
+    context_pred_baseline = []
+    context_pred_trained = []
+    context_targets = []
+
+    residuals = []
+    aucs = []
     for i, (input, target) in enumerate(val_loader):
-        seg_target, dist_target = target
+        # seg_target = target
+        seg_target, context_target = target
         data_time.update(time.time() - end)
         input = input.cuda(non_blocking=True)
         seg_target = seg_target.cuda(non_blocking=True)
-        dist_target = dist_target[0]
-        dist_targets.append(dist_target)
-        dist_target = dist_target.cuda(non_blocking=True)
-        output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=dist_target)
-        predicted_distribution = predicted_distribution[0]
+        context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
+        context_target = context_target[0]  # only look at global scale for now
 
-        dist_pred_trained.append(predicted_distribution)
-        
-        dist_baseline = nn.Softmax(dim=1)(output)
-        dist_baseline = nn.AdaptiveAvgPool2d((1,1))(dist_baseline)
-        dist_pred_baseline.append(dist_baseline)
+        # output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=context_target)
+        output, output_alt = model(input)
+        # output, aux, classification, residual = model(input)
+        # output_alt = multiscale_prediction(model, input)
 
-        n = input.size(0)
+        # output, classifications = model(input)
 
+        # auc = mean_auc(context_target, classifications)
+        # aucs.append(auc)
+
+        # baseline model
         output = output.max(1)[1]
+        updated_context = extract_mask_distributions(seg_target.cpu(), top_k=5, predicted_mask=output.cpu()) # top k from predicted mask
+        # updated_context = extract_adjusted_distribution(seg_target, output)  # without void
+        
         intersection, union, target = intersectionAndUnionGPU(output, seg_target, 150, 255)
         
         intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
@@ -221,8 +264,10 @@ def validate(model):
 
         ious.append(intersection / (union + 1e-10))
         accs.append(intersection / (target + 1e-10))
+        # residuals.append(residual.squeeze())
 
-        output_alt = output_alt.max(1)[1]
+        # context model
+        output_alt = output_alt.max(1)[1] #torch.from_numpy(np.expand_dims(output_alt, 0)).to("cuda").max(3)[1]
         intersection2, union2, target2 = intersectionAndUnionGPU(output_alt, seg_target, 150, 255)
         
         intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
@@ -231,217 +276,100 @@ def validate(model):
         ious2.append(intersection2 / (union2 + 1e-10))
         accs2.append(intersection2 / (target2 + 1e-10))
 
+        # context + corrections (novoid / top_k prediction experiment)
+        updated_context = np.asarray(updated_context).reshape(context_target.shape)
+
+        updated_context = torch.from_numpy(updated_context).cuda(non_blocking=True)
+        output, output_alt_novoid = model(input, distributions=updated_context)
+
+        # aggregation + novoid PSPNet
+        output_alt_novoid = output_alt_novoid.max(1)[1]
+        intersection3, union3, target3 = intersectionAndUnionGPU(output_alt_novoid, seg_target, 150, 255)
+        
+        intersection3, union3, target3 = intersection3.cpu().numpy(), union3.cpu().numpy(), target3.cpu().numpy()
+        intersection_meter3.update(intersection3), union_meter3.update(union3), target_meter3.update(target3)
+
+        ious3.append(intersection3 / (union3 + 1e-10))
+        accs3.append(intersection3 / (target3 + 1e-10))
+
         batch_time.update(time.time() - end)
         end = time.time()
+        print(f"{i+1}/{len(val_loader)}")
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
     mIoU = np.mean(iou_class)
     mAcc = np.mean(accuracy_class)
     allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
-    print('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+    print('Val result (baseline): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+
+    # print("Mean auc", np.mean(auc))
 
     iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
     accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
     mIoU2 = np.mean(iou_class2)
     mAcc2 = np.mean(accuracy_class2)
     allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
-    print('Val result2: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
-    return mIoU, mAcc, allAcc
+    print('Val result (+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
 
-def get_unnormalized_image(image):
-    input_image_viz = image.squeeze().permute((1, 2, 0)).cpu()
-    input_image_viz = input_image_viz * torch.tensor(std)
-    input_image_viz = input_image_viz + torch.tensor(mean)
-    input_image_viz = input_image_viz.cpu().numpy().astype(np.uint8)
-    return input_image_viz
-
-def validate_visualization(model):
-    val_transform = transform.Compose([
-        transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
-        transform.ToTensor(),
-        transform.Normalize(mean=mean, std=std)])
-    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, classification_heads_x=False, classification_heads_y=True)
-    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None)
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
-    intersection_meter = AverageMeter()
-    union_meter = AverageMeter()
-    target_meter = AverageMeter()
-    intersection_meter2 = AverageMeter()
-    union_meter2 = AverageMeter()
-    target_meter2 = AverageMeter()
-
-    model.eval()
-    end = time.time()
-    ious = []
-    accs = []
-    ious2 = []
-    accs2 = []
-
-    dist_pred_baseline = []
-    dist_pred_trained = []
-    dist_targets = []
-    for i, (input, target) in enumerate(val_loader):
-        seg_target, dist_target = target
-        data_time.update(time.time() - end)
-        input = input.cuda(non_blocking=True)
-        seg_target = seg_target.cuda(non_blocking=True)
-        dist_target = dist_target[0]
-        dist_targets.append(dist_target)
-        dist_target = dist_target.cuda(non_blocking=True)
-        output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=dist_target)
-        predicted_distribution = predicted_distribution[0]
-
-        # colors = np.loadtxt("/home/connor/Dev/semseg/data/ade20k/ade20k_colors.txt").astype('uint8')
-        # fig, axes = plt.subplots(2, 5, figsize=(12, 14))
-        # viz_image = get_unnormalized_image(input)
-        # gt_seg = colorize(seg_target.squeeze().cpu().numpy().astype(np.uint8), colors)
-        # prediction_reg = colorize(output.max(1)[1].squeeze().cpu().numpy().astype(np.uint8), colors)
-        # prediction_alt = colorize(output_alt.max(1)[1].squeeze().cpu().numpy().astype(np.uint8), colors)
-        # prediction_alt_gt = colorize(output_alt_gt.max(1)[1].squeeze().cpu().numpy().astype(np.uint8), colors)
-        # axes[0][0].imshow(viz_image)
-        # axes[0][0].set_title("Input Image")
-        # axes[0][1].imshow(gt_seg)
-        # axes[0][1].set_title("Ground Truth Segmentation")
-        # axes[0][2].imshow(prediction_reg)
-        # axes[0][2].set_title("Baseline PSPNet Segmentation")
-        # axes[0][3].imshow(prediction_alt)
-        # axes[0][3].set_title("PSPNet Segmentation + DistFix")
-        # axes[0][4].imshow(prediction_alt_gt)
-        # axes[0][4].set_title("PSPNet Segmentation + DistFix w/GT Labels")
-
-        # dist_pred_trained.append(predicted_distribution)
-        # predictions = set(np.unique(output.max(1)[1].squeeze().cpu().numpy()))
-        # p2 = set(np.unique(output_alt.max(1)[1].squeeze().cpu().numpy())) 
-        # p3 = set(np.unique(output_alt_gt.max(1)[1].squeeze().cpu().numpy()))
-        # predictions.update(p2)
-        # predictions.update(p3)
-
-        # N_CLASS length vectors 
-        dist_label = dist_target.squeeze().cpu().numpy()
-        dist_baseline = extract_mask_distributions(output.max(1)[1].squeeze().cpu(), head_sizes=[1])[0].squeeze()
-        dist_fix = extract_mask_distributions(output_alt.max(1)[1].squeeze().cpu(), head_sizes=[1])[0].squeeze()
-        dist_fix_gt = extract_mask_distributions(output_alt_gt.max(1)[1].squeeze().cpu(), head_sizes=[1])[0].squeeze()
-
-        # ERROR
-        baseline_err = np.sum(np.abs(dist_label - dist_baseline))
-        fix_err = np.sum(np.abs(dist_label - dist_fix))
-        fix_gt_err = np.sum(np.abs(dist_label - dist_fix_gt))
-
-        # predictions = list(predictions)
-        # sns.barplot(x=[n for n in predictions], y=np.take(dist_label, [predictions], 0)[0], ax=axes[1][1])
-        # sns.barplot(x=[n for n in predictions], y=np.take(dist_baseline, [predictions], 0)[0], ax=axes[1][2])
-        # axes[1][2].set_xlabel(f"Distance: {np.round(baseline_err, decimals=2)}")
-        # sns.barplot(x=[n for n in predictions], y=np.take(dist_fix, [predictions], 0)[0], ax=axes[1][3])
-        # axes[1][3].set_xlabel(f"Distance: {np.round(fix_err, decimals=2)}")
-        # sns.barplot(x=[n for n in predictions], y=np.take(dist_fix_gt, [predictions], 0)[0], ax=axes[1][4])
-        # axes[1][4].set_xlabel(f"Distance: {np.round(fix_gt_err, decimals=2)}")
-
-        # plt.savefig(f"samples/sample{i}.png")
-        # plt.clf()
-
-        # dist_pred_baseline.append(dist_baseline)
-
-        n = input.size(0)
-
-        output = output.max(1)[1]
-        intersection, union, target = intersectionAndUnionGPU(output, seg_target, 150, 255)
-        
-        intersection, union, target = intersection.cpu().numpy(), union.cpu().numpy(), target.cpu().numpy()
-        intersection_meter.update(intersection), union_meter.update(union), target_meter.update(target)
-
-        ious.append(intersection / (union + 1e-10))
-        accs.append(intersection / (target + 1e-10))
-
-        output_alt_gt = output_alt_gt.max(1)[1]
-        intersection2, union2, target2 = intersectionAndUnionGPU(output_alt_gt, seg_target, 150, 255)
-        
-        intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
-        intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
-
-        ious2.append(intersection2 / (union2 + 1e-10))
-        accs2.append(intersection2 / (target2 + 1e-10))
-
-        batch_time.update(time.time() - end)
-        end = time.time()
-        # if i > 30:
-        #     break
-
-    iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
-    accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
-    mIoU = np.mean(iou_class)
-    mAcc = np.mean(accuracy_class)
-    allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
-    print('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
-
-    iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
-    accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
-    mIoU2 = np.mean(iou_class2)
-    mAcc2 = np.mean(accuracy_class2)
-    allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
-    print('Val result2: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
+    iou_class3 = intersection_meter3.sum / (union_meter3.sum + 1e-10)
+    accuracy_class3 = intersection_meter3.sum / (target_meter3.sum + 1e-10)
+    mIoU3 = np.mean(iou_class3)
+    mAcc3 = np.mean(accuracy_class3)
+    allAcc3 = sum(intersection_meter3.sum) / (sum(target_meter3.sum) + 1e-10)
+    print('Val result (+novoid+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU3, mAcc3, allAcc3))
     return mIoU, mAcc, allAcc
 
 def main(model):
-    learning_rate = 1e-3
-    # params_list = [dict(params=model.channel_weights.parameters(), lr=learning_rate)]
-    # optimizer = torch.optim.SGD(params_list, lr=1e-2, momentum=0.9, weight_decay=1e-4)
-    # optimizer = torch.optim.Adam(lr=learning_rate, weight_decay=1e-4)
+    learning_rate = 5e-4
+    # MODIFY TRAINED PARAMETERS FOR EXP HERE
+    # modules_new = [model.pyramid.class_head, model.pyramid.conv1]
+    modules_new = [model.combo.layer1, model.combo.layer2]
+
+    # modules_old = [model.pspnet.layer0, model.pspnet.layer1, model.pspnet.layer2, model.pspnet.layer3, model.pspnet.layer4]
+    params_list = []
+    for module in modules_new:
+        params_list.append(dict(params=module.parameters(), lr=learning_rate * 10))
+    # # for module in modules_old:
+    # #     params_list.append(dict(params=module.parameters(), lr=learning_rate))
+    optimizer = torch.optim.Adam(params_list, lr=learning_rate, weight_decay=1e-4)
+
     train_epochs = [ ]
     val_epochs = [ ]
     train_transform = transform.Compose([
-    transform.RandScale([0.5, 2.0]),
-    transform.RandRotate([-10, 10], padding=mean, ignore_label=255),
-    transform.RandomGaussianBlur(),
-    transform.RandomHorizontalFlip(),
-    transform.Crop([473, 473], crop_type='rand', padding=mean, ignore_label=255),
-    transform.ToTensor(),
-    transform.Normalize(mean=mean, std=std)])
-    train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, classification_heads_x=True, classification_heads_y=False)
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True, sampler=None, drop_last=True)
+        transform.RandScale([0.5, 2.0]),
+        transform.RandRotate([-10, 10], padding=mean, ignore_label=255),
+        transform.RandomGaussianBlur(),
+        transform.RandomHorizontalFlip(),
+        transform.Crop([473, 473], crop_type='rand', padding=mean, ignore_label=255),
+        transform.ToTensor(),
+        transform.Normalize(mean=mean, std=std)
+    ])
+    viz_transform = transform.Compose([
+        transform.RandScale([1.4, 1.6  ]),
+        transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
+        transform.ToTensor(),
+        transform.Normalize(mean=mean, std=std)
+    ])
+
+    train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, context_x=False, context_y=True, context_type="distribution")
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+
+    viz_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=viz_transform, context_x=False, context_y=True, context_type="distribution")
+    viz_loader = torch.utils.data.DataLoader(viz_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+    # debug(viz_loader, model)
+
     for epoch in range(0, epochs):
-        #mIoU, mAcc, allAcc = validate(model)
-        validate_visualization(model)
-        break
-        #val_epochs.append((mIoU, mAcc, allAcc))
+        mIoU, mAcc, allAcc = validate(model)
+        val_epochs.append((mIoU, mAcc, allAcc))
         # _, t_mIoU, t_mAcc, t_allAcc = train(train_loader, model, optimizer, epoch)
         # train_epochs.append((t_mIoU, t_mAcc, t_allAcc))
         
     # torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"exp/ade20k/pspnet50/model/asdfasdf.pth")
     return val_epochs
-    # validate(model)
 
 if __name__ == "__main__":
-    # bottleneck 1x1 -> n_classes 3x3, no bias
-    # Val result: mIoU/mAcc/allAcc 0.4216/0.5595/0.7897.
 
-    # 3x3 only with bias (nearest upsampling)
-    # Train 0.7559/0.8216/0.9233
-    # Val 0.3218/0.4034/0.7345
-    # 3x3 only without bias (nearest upsampling)
-    # Train 0.7750/0.8395/0.9283
-    # Val 0.3185/0.4113/0.7243
-
-    # 1x1 linear bottleneck 3x3 with bias
-    # Train 0.7384/0.8142/0.9183
-    # Val 0.4223, 0.5312, 0.7974
-
-    # 1x1 linear bottleneck 3x3 without bias
-    # Train 0.7327/0.8095/0.9163
-    # Val 0.4156/0.5236/0.7957
-
-
-    # conv combination
-    # Train 6505/0.7651/0.8962
-    # Val 0.4134/0.5269/0.7936
-    # 0.4183/0.5376/0.7945
-    model_conv = PSPNetAggregation(pspnet_weights="distributions_weighted.pth").to("cuda")
+    model_conv = PSPNetAggregation(pspnet_weights="exp_models/distributions_weighted.pth").to("cuda")
     val_hist_conv = main(model_conv)
     print(val_hist_conv)
-
-    # Val result: mIoU/mAcc/allAcc 0.4007/0.4888/0.7865.
-    # model_mlp = PSPNetAggregation(pspnet_weights="exp/ade20k/pspnet50/model/classification.pth", agg="mlp").to("cuda")
-    # val_hist_mlp = main(model_mlp, agg_type="mlp")
-    # print(val_hist_conv)
-    # print(val_hist_mlp)

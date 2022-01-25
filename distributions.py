@@ -16,12 +16,12 @@ SHOW_PLOTS = True
 def barplot(y_data, title=""):
     if not SHOW_PLOTS:
         return
-    plt.figure(figsize=(12, 10))
+    plt.figure(figsize=(9, 5), dpi=120)
     x_ticks = [i for i in range(len(classes))]
     sns.barplot(x=x_ticks, y=y_data)
     plt.xticks(x_ticks, labels=classes_short, rotation="vertical")
     plt.tight_layout()
-    plt.title(title)
+    plt.title(title, fontsize=12)
     plt.show()
 
 barplot(y_data=dist, title="Dataset Distribution (GT)")
