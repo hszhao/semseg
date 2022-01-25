@@ -1,7 +1,7 @@
 DATA:
-  data_root: dataset/ade20k
-  train_list: dataset/ade20k/list/training.txt
-  val_list: dataset/ade20k/list/validation.txt
+  data_root: /data/ade20k
+  train_list: /data/ade20k/list/training.txt
+  val_list: /data/ade20k/list/validation.txt
   classes: 150
 
 TRAIN:
@@ -17,7 +17,7 @@ TRAIN:
   zoom_factor: 8  # zoom factor for final prediction during training, be in [1, 2, 4, 8]
   ignore_label: 255
   aux_weight: 0.4
-  train_gpu: [0, 1, 2, 3, 4, 5, 6, 7]
+  train_gpu: [0,1,2,3]
   workers: 16  # data loader workers
   batch_size: 16  # batch size for training
   batch_size_val: 8  # batch size for validation during training, memory and speed tradeoff
@@ -29,8 +29,8 @@ TRAIN:
   weight_decay: 0.0001
   manual_seed:
   print_freq: 10
-  save_freq: 1
-  save_path: exp/ade20k/pspnet50/model
+  save_freq: 10
+  save_path: /logs/exp/ade20k/pspnet50/model
   weight:  # path to initial weight (default: none)
   resume:  # path to latest checkpoint (default: none)
   evaluate: False  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
@@ -42,7 +42,7 @@ Distributed:
   rank: 0
 
 TEST:
-  test_list: dataset/ade20k/list/validation.txt
+  test_list: /data/ade20k/list/validation.txt
   split: val  # split in [train, val and test]
   base_size: 512  # based size for scaling
   test_h: 473
@@ -52,7 +52,10 @@ TEST:
   index_start: 0  # evaluation start index in list
   index_step: 0  # evaluation step index in list, 0 means to end
   test_gpu: [0]
-  model_path: exp/ade20k/pspnet50/model/train_epoch_100.pth  # evaluation model path
-  save_folder: exp/ade20k/pspnet50/result/epoch_100/val/ss  # results save folder
+  model_path: /logs/exp/ade20k/pspnet50/model/train_epoch_90.pth  # evaluation model path
+  save_folder: /logs/exp/ade20k/pspnet50/result/epoch_100/val/ss  # results save folder
   colors_path: data/ade20k/ade20k_colors.txt  # path of dataset colors
   names_path: data/ade20k/ade20k_names.txt  # path of dataset category names
+  calc_results: true
+  result_path: /logs/exp/evals/ade20k_pspnet50_0.csv # evaluation result path
+  sparse: false

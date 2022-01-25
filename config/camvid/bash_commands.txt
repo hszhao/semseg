@@ -1,0 +1,9 @@
+bash tool/train.sh camvid segnet_0_300_seed2_annealed && bash tool/train.sh camvid segnet_0.75_300_seed3_annealed && bash tool/train.sh camvid segnet_0.9375_300_seed4_annealed
+bash tool/train.sh camvid segnet_0_300_seed3_annealed && bash tool/train.sh camvid segnet_0.75_300_seed4_annealed && bash tool/train.sh camvid segnet_0.9375_300_seed5_annealed
+bash tool/train.sh camvid segnet_0_300_seed4_annealed && bash tool/train.sh camvid segnet_0.75_300_seed5_annealed
+bash tool/train.sh camvid segnet_0_300_seed5_annealed && bash tool/train.sh camvid segnet_0.875_300_seed2_annealed
+bash tool/train.sh camvid segnet_0.5_300_seed2_annealed && bash tool/train.sh camvid segnet_0.875_300_seed3_annealed
+bash tool/train.sh camvid segnet_0.5_300_seed3_annealed && bash tool/train.sh camvid segnet_0.875_300_seed4_annealed
+bash tool/train.sh camvid segnet_0.5_300_seed4_annealed && bash tool/train.sh camvid segnet_0.875_300_seed5_annealed
+bash tool/train.sh camvid segnet_0.5_300_seed5_annealed && bash tool/train.sh camvid segnet_0.9375_300_seed2_annealed
+bash tool/train.sh camvid segnet_0.75_300_seed2_annealed && bash tool/train.sh camvid segnet_0.9375_300_seed3_annealed

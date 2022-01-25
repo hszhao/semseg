@@ -1,10 +1,10 @@
-import random
-import math
-import numpy as np
-import numbers
 import collections
-import cv2
+import math
+import numbers
+import random
 
+import cv2
+import numpy as np
 import torch
 
 
@@ -23,8 +23,9 @@ class ToTensor(object):
     # Converts numpy.ndarray (H x W x C) to a torch.FloatTensor of shape (C x H x W).
     def __call__(self, image, label):
         if not isinstance(image, np.ndarray) or not isinstance(label, np.ndarray):
-            raise (RuntimeError("segtransform.ToTensor() only handle np.ndarray"
-                                "[eg: data readed by cv2.imread()].\n"))
+            raise (
+                RuntimeError("segtransform.ToTensor() only handle np.ndarray" "[eg: data readed by cv2.imread()].\n")
+            )
         if len(image.shape) > 3 or len(image.shape) < 2:
             raise (RuntimeError("segtransform.ToTensor() only handle np.ndarray with 3 dims or 2 dims.\n"))
         if len(image.shape) == 2:
@@ -64,7 +65,7 @@ class Normalize(object):
 class Resize(object):
     # Resize the input to the given size, 'size' is a 2-element tuple or list in the order of (h, w).
     def __init__(self, size):
-        assert (isinstance(size, collections.Iterable) and len(size) == 2)
+        assert isinstance(size, collections.Iterable) and len(size) == 2
         self.size = size
 
     def __call__(self, image, label):
@@ -76,18 +77,26 @@ class Resize(object):
 class RandScale(object):
     # Randomly resize image & label with scale factor in [scale_min, scale_max]
     def __init__(self, scale, aspect_ratio=None):
-        assert (isinstance(scale, collections.Iterable) and len(scale) == 2)
-        if isinstance(scale, collections.Iterable) and len(scale) == 2 \
-                and isinstance(scale[0], numbers.Number) and isinstance(scale[1], numbers.Number) \
-                and 0 < scale[0] < scale[1]:
+        assert isinstance(scale, collections.Iterable) and len(scale) == 2
+        if (
+            isinstance(scale, collections.Iterable)
+            and len(scale) == 2
+            and isinstance(scale[0], numbers.Number)
+            and isinstance(scale[1], numbers.Number)
+            and 0 < scale[0] < scale[1]
+        ):
             self.scale = scale
         else:
             raise (RuntimeError("segtransform.RandScale() scale param error.\n"))
         if aspect_ratio is None:
             self.aspect_ratio = aspect_ratio
-        elif isinstance(aspect_ratio, collections.Iterable) and len(aspect_ratio) == 2 \
-                and isinstance(aspect_ratio[0], numbers.Number) and isinstance(aspect_ratio[1], numbers.Number) \
-                and 0 < aspect_ratio[0] < aspect_ratio[1]:
+        elif (
+            isinstance(aspect_ratio, collections.Iterable)
+            and len(aspect_ratio) == 2
+            and isinstance(aspect_ratio[0], numbers.Number)
+            and isinstance(aspect_ratio[1], numbers.Number)
+            and 0 < aspect_ratio[0] < aspect_ratio[1]
+        ):
             self.aspect_ratio = aspect_ratio
         else:
             raise (RuntimeError("segtransform.RandScale() aspect_ratio param error.\n"))
@@ -100,8 +109,20 @@ class RandScale(object):
             temp_aspect_ratio = math.sqrt(temp_aspect_ratio)
         scale_factor_x = temp_scale * temp_aspect_ratio
         scale_factor_y = temp_scale / temp_aspect_ratio
-        image = cv2.resize(image, None, fx=scale_factor_x, fy=scale_factor_y, interpolation=cv2.INTER_LINEAR)
-        label = cv2.resize(label, None, fx=scale_factor_x, fy=scale_factor_y, interpolation=cv2.INTER_NEAREST)
+        image = cv2.resize(
+            image,
+            None,
+            fx=scale_factor_x,
+            fy=scale_factor_y,
+            interpolation=cv2.INTER_LINEAR,
+        )
+        label = cv2.resize(
+            label,
+            None,
+            fx=scale_factor_x,
+            fy=scale_factor_y,
+            interpolation=cv2.INTER_NEAREST,
+        )
         return image, label
 
 
@@ -111,18 +132,24 @@ class Crop(object):
         size (sequence or int): Desired output size of the crop. If size is an
         int instead of sequence like (h, w), a square crop (size, size) is made.
     """
-    def __init__(self, size, crop_type='center', padding=None, ignore_label=255):
+
+    def __init__(self, size, crop_type="center", padding=None, ignore_label=255):
         if isinstance(size, int):
             self.crop_h = size
             self.crop_w = size
-        elif isinstance(size, collections.Iterable) and len(size) == 2 \
-                and isinstance(size[0], int) and isinstance(size[1], int) \
-                and size[0] > 0 and size[1] > 0:
+        elif (
+            isinstance(size, collections.Iterable)
+            and len(size) == 2
+            and isinstance(size[0], int)
+            and isinstance(size[1], int)
+            and size[0] > 0
+            and size[1] > 0
+        ):
             self.crop_h = size[0]
             self.crop_w = size[1]
         else:
             raise (RuntimeError("crop size error.\n"))
-        if crop_type == 'center' or crop_type == 'rand':
+        if crop_type == "center" or crop_type == "rand":
             self.crop_type = crop_type
         else:
             raise (RuntimeError("crop type error: rand | center\n"))
@@ -151,24 +178,40 @@ class Crop(object):
         if pad_h > 0 or pad_w > 0:
             if self.padding is None:
                 raise (RuntimeError("segtransform.Crop() need padding while padding argument is None\n"))
-            image = cv2.copyMakeBorder(image, pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half, cv2.BORDER_CONSTANT, value=self.padding)
-            label = cv2.copyMakeBorder(label, pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half, cv2.BORDER_CONSTANT, value=self.ignore_label)
+            image = cv2.copyMakeBorder(
+                image,
+                pad_h_half,
+                pad_h - pad_h_half,
+                pad_w_half,
+                pad_w - pad_w_half,
+                cv2.BORDER_CONSTANT,
+                value=self.padding,
+            )
+            label = cv2.copyMakeBorder(
+                label,
+                pad_h_half,
+                pad_h - pad_h_half,
+                pad_w_half,
+                pad_w - pad_w_half,
+                cv2.BORDER_CONSTANT,
+                value=self.ignore_label,
+            )
         h, w = label.shape
-        if self.crop_type == 'rand':
+        if self.crop_type == "rand":
             h_off = random.randint(0, h - self.crop_h)
             w_off = random.randint(0, w - self.crop_w)
         else:
             h_off = int((h - self.crop_h) / 2)
             w_off = int((w - self.crop_w) / 2)
-        image = image[h_off:h_off+self.crop_h, w_off:w_off+self.crop_w]
-        label = label[h_off:h_off+self.crop_h, w_off:w_off+self.crop_w]
+        image = image[h_off : h_off + self.crop_h, w_off : w_off + self.crop_w]
+        label = label[h_off : h_off + self.crop_h, w_off : w_off + self.crop_w]
         return image, label
 
 
 class RandRotate(object):
     # Randomly rotate image & label with rotate factor in [rotate_min, rotate_max]
     def __init__(self, rotate, padding, ignore_label=255, p=0.5):
-        assert (isinstance(rotate, collections.Iterable) and len(rotate) == 2)
+        assert isinstance(rotate, collections.Iterable) and len(rotate) == 2
         if isinstance(rotate[0], numbers.Number) and isinstance(rotate[1], numbers.Number) and rotate[0] < rotate[1]:
             self.rotate = rotate
         else:
@@ -188,8 +231,22 @@ class RandRotate(object):
             angle = self.rotate[0] + (self.rotate[1] - self.rotate[0]) * random.random()
             h, w = label.shape
             matrix = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1)
-            image = cv2.warpAffine(image, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=self.padding)
-            label = cv2.warpAffine(label, matrix, (w, h), flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT, borderValue=self.ignore_label)
+            image = cv2.warpAffine(
+                image,
+                matrix,
+                (w, h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=self.padding,
+            )
+            label = cv2.warpAffine(
+                label,
+                matrix,
+                (w, h),
+                flags=cv2.INTER_NEAREST,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=self.ignore_label,
+            )
         return image, label
 
 
