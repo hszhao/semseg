@@ -1,6 +1,7 @@
 import os
 import random
 import time
+from turtle import update
 import cv2
 import numpy as np
 import logging
@@ -243,7 +244,7 @@ def validate(model):
         context_target = context_target[0]  # only look at global scale for now
 
         # output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=context_target)
-        output, output_alt = model(input)
+        output, output_alt = model(input, distributions=context_target)
         # output, aux, classification, residual = model(input)
         # output_alt = multiscale_prediction(model, input)
 
@@ -255,6 +256,7 @@ def validate(model):
         # baseline model
         output = output.max(1)[1]
         updated_context = extract_mask_distributions(seg_target.cpu(), top_k=5, predicted_mask=output.cpu()) # top k from predicted mask
+        # updated_context = torch.from_numpy(np.asarray(updated_context).reshape(context_target.shape)).to("cuda")
         # updated_context = extract_adjusted_distribution(seg_target, output)  # without void
         
         intersection, union, target = intersectionAndUnionGPU(output, seg_target, 150, 255)
@@ -280,11 +282,11 @@ def validate(model):
         updated_context = np.asarray(updated_context).reshape(context_target.shape)
 
         updated_context = torch.from_numpy(updated_context).cuda(non_blocking=True)
-        output, output_alt_novoid = model(input, distributions=updated_context)
+        _, output_alt_exp = model(input, distributions=updated_context)
 
         # aggregation + novoid PSPNet
-        output_alt_novoid = output_alt_novoid.max(1)[1]
-        intersection3, union3, target3 = intersectionAndUnionGPU(output_alt_novoid, seg_target, 150, 255)
+        output_alt_exp = output_alt_exp.max(1)[1]
+        intersection3, union3, target3 = intersectionAndUnionGPU(output_alt_exp, seg_target, 150, 255)
         
         intersection3, union3, target3 = intersection3.cpu().numpy(), union3.cpu().numpy(), target3.cpu().numpy()
         intersection_meter3.update(intersection3), union_meter3.update(union3), target_meter3.update(target3)

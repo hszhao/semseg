@@ -55,11 +55,13 @@ def vector_list_to_mat(vectors):
 
 def extract_mask_distributions(mask, head_sizes=[1], top_k=5, predicted_mask=None):
     """
-    mask: ground truth annotation
+    mask: ground truth annotation (either BxWxH or WxH)
     head_sizes: list of scales at which to extract the distribution of pixels for each class
     top_k: limit # of classes, note even with k < C the distribution will add up to 1
     predicted_mask: if supplied, take the top classes from the predicted segmentation mask rather than ground truth annotation
     """
+    if len(mask.size()) == 3: # if [B x W x H] rather than single sample [ W x H ]
+        return [ extract_mask_distributions(mask[i], top_k=top_k, head_sizes=head_sizes, predicted_mask=predicted_mask[i]) for i in range(mask.size()[0]) ]
     dist_labels = []
     for s in head_sizes:
         mat = extract_mask_distribution(mask, s)
@@ -78,9 +80,10 @@ def extract_mask_distributions(mask, head_sizes=[1], top_k=5, predicted_mask=Non
 
 def extract_mask_distribution(mask, scale=1):
     """
+    Input: WxH integer-encoded label
     annotation --> pixel distribution at specified scales
     ignores background pixels (255)
-    """
+    """ 
     onehot = (np.arange(255+1) == mask.numpy()[...,None]).astype(int)
     onehot_ignore = onehot[:,:,:N_CLASSES]
     if scale == 1: # special case
