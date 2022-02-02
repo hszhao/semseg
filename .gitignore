@@ -1,4 +1,6 @@
 ## General
+# Numpy Archives
+*.gz
 
 # Compiled Object files
 *.slo

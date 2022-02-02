@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 
 from torch.utils.data import Dataset
-
+from .classification_utils import extract_mask_classes, extract_mask_distributions
 
 IMG_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm']
 
@@ -50,16 +50,21 @@ def make_dataset(split='train', data_root=None, data_list=None):
 
 
 class SemData(Dataset):
-    def __init__(self, split='train', data_root=None, data_list=None, transform=None):
+    def __init__(self, split='train', context_x=False, context_y=False, context_type="classification", data_root=None, data_list=None, transform=None):
+        assert context_type in ["classification", "distribution", "both"]
         self.split = split
         self.data_list = make_dataset(split, data_root, data_list)
         self.transform = transform
+        self.context_x = context_x
+        self.context_y = context_y
+        self.context_type = context_type
 
     def __len__(self):
         return len(self.data_list)
 
     def __getitem__(self, index):
         image_path, label_path = self.data_list[index]
+        # print(f"Image path: {image_path}")
         image = cv2.imread(image_path, cv2.IMREAD_COLOR)  # BGR 3 channel ndarray wiht shape H * W * 3
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # convert cv2 read image from BGR order to RGB order
         image = np.float32(image)
@@ -68,4 +73,15 @@ class SemData(Dataset):
             raise (RuntimeError("Image & label shape mismatch: " + image_path + " " + label_path + "\n"))
         if self.transform is not None:
             image, label = self.transform(image, label)
+        if self.context_x or self.context_y:
+            if self.context_type == "classification":
+                context = extract_mask_classes(label)
+            elif self.context_type == "distribution":
+                context = extract_mask_distributions(label, head_sizes=[1], top_k=5)
+            elif self.context_type == "both":
+                context = (extract_mask_classes(label, head_sizes=[1]), extract_mask_distributions(label, head_sizes=[1], top_k=5))
+            if self.context_x:
+                image = (image, context)
+            if self.context_y:
+                label = (label, context)
         return image, label

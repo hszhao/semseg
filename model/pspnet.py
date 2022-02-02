@@ -4,7 +4,6 @@ import torch.nn.functional as F
 
 import model.resnet as models
 
-
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):
         super(PPM, self).__init__()

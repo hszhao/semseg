@@ -121,17 +121,17 @@ def main():
 
 def net_process(model, image, mean, std=None, flip=True):
     input = torch.from_numpy(image.transpose((2, 0, 1))).float()
-    if std is None:
-        for t, m in zip(input, mean):
-            t.sub_(m)
-    else:
-        for t, m, s in zip(input, mean, std):
-            t.sub_(m).div_(s)
+    # if std is None:
+    #     for t, m in zip(input, mean):
+    #         t.sub_(m)
+    # else:
+    #     for t, m, s in zip(input, mean, std):
+    #         t.sub_(m).div_(s)
     input = input.unsqueeze(0).cuda()
     if flip:
         input = torch.cat([input, input.flip(3)], 0)
     with torch.no_grad():
-        output = model(input)
+        output = model(input)[0]
     _, _, h_i, w_i = input.shape
     _, _, h_o, w_o = output.shape
     if (h_o != h_i) or (w_o != w_i):
@@ -177,6 +177,27 @@ def scale_process(model, image, classes, crop_h, crop_w, h, w, mean, std=None, s
     prediction = cv2.resize(prediction_crop, (w, h), interpolation=cv2.INTER_LINEAR)
     return prediction
 
+def multiscale_prediction(model, image, classes=150, base_size=512, crop_h=473, crop_w=473, scales=[0.5, 0.75, 1.0, 1.25, 1.5, 1.75]):
+    mean = [0.485, 0.456, 0.406]
+    # mean = [item * 255 for item in mean]
+    std = [0.229, 0.224, 0.225]
+    # std = [item * 255 for item in std]
+    image = np.squeeze(image.cpu().numpy(), axis=0)
+    image = np.transpose(image, (1, 2, 0))
+    h, w, _ = image.shape
+    prediction = np.zeros((h, w, classes), dtype=float)
+    for scale in scales:
+        long_size = round(scale * base_size)
+        new_h = long_size
+        new_w = long_size
+        if h > w:
+            new_w = round(long_size/float(h)*w)
+        else:
+            new_h = round(long_size/float(w)*h)
+        image_scale = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        prediction += scale_process(model, image_scale, classes, crop_h, crop_w, h, w, mean, std)
+    prediction /= len(scales)
+    return prediction
 
 def test(test_loader, data_list, model, classes, mean, std, base_size, crop_h, crop_w, scales, gray_folder, color_folder, colors):
     logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')
