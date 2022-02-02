@@ -1,4 +1,10 @@
-# PyTorch Semantic Segmentation
+# Master's Thesis Research Repo
+
+This fork is my primary hub for experiments on ADE20k for my Master's thesis. New models for experiments can be found in `model/`, the primary training script is at `tool/train_context.py`. Various utilities for extracting context into the dataloader can be found in `util`. Email me (cjmclaughlin@wpi.edu) if you have any questions. 
+
+Shown below is the original readme for the `semseg` project. 
+
+## PyTorch Semantic Segmentation
 
 ### Introduction
 

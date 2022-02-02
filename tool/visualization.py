@@ -27,8 +27,8 @@ from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU,
 from util.classification_utils import extract_mask_distributions, extract_adjusted_distribution
 from tool.test import multiscale_prediction
 
-from model.pspnet_agg import PSPNetAggregation
-from model.pencnet import PyramidEncodingNetwork
+from model.pspnet_context import PSPNetContext
+from model.pspnet_ms_context import PyramidContextNetwork
 from model.encnet import EncNet
 from model.fcn import FCN
 
@@ -208,6 +208,9 @@ def extract_ppm_features(x, ppm):
     return x0, x1, x2, x3   
 
 def classification_heatmap(xs, input, model, multi_scale = True):
+    """
+    pyramid classification --> single heatmap
+    """
     features = []
     for x in xs:
         x = nn.ReLU()(model.pyramid.bn(model.pyramid.conv1(x)))
@@ -219,36 +222,35 @@ def classification_heatmap(xs, input, model, multi_scale = True):
     else:
         return torch.mean(torch.cat(features, dim=0), dim=0).squeeze().cpu().detach().numpy()
 
-def cam(model: PyramidEncodingNetwork, input, seg_target):
+def cam(model, input, seg_target):
     """
-    class activation map for pyramid encoding network impl
+    standard CAM, assumes classification layer immediately follows GAP of final features
     """
-    output, classifications = model.forward(input)
+    output, _ = model.forward(input)
 
     dist = extract_mask_distributions(seg_target.squeeze().cpu())
     seg = output.max(1)[1].squeeze().detach().cpu().numpy()
     # forward pass up until ppm
-    x = model.pspnet.layer0(input)
-    x = model.pspnet.layer1(x)
-    x = model.pspnet.layer2(x)
-    x = model.pspnet.layer3(x)
-    x = model.pspnet.layer4(x)
-    # perform pyramid pooling without downsampling
-    x0, x1, x2, x3 = extract_ppm_features(x, model.pspnet.ppm)
-
-    # pre-classification-head conv-bn-relu
-    xms = classification_heatmap([x0, x1, x2, x3], input, model, multi_scale=False)
-    xss = classification_heatmap([x0, x1, x2, x3], input, model, multi_scale=False)
-    # x = nn.ReLU()(model.pyramid.bn(model.pyramid.conv1(x)))
-    # x = nn.Sigmoid()(model.pyramid.class_head(x)) * classifications[0]
-    # x = F.interpolate(x, size=input.size()[2:], mode="bilinear", align_corners=True)
-    # x = x.squeeze().detach().cpu().numpy()
+    x = model.pspnet.pspnet.layer0(input)
+    x = model.pspnet.pspnet.layer1(x)
+    x = model.pspnet.pspnet.layer2(x)
+    x = model.pspnet.pspnet.layer3(x)
+    x = model.pspnet.pspnet.layer4(x)
+    x = model.pspnet.pspnet.ppm(x)
+    # extract final feature map
+    for i in range(len(model.pspnet.pspnet.cls)-1):
+        x = model.pspnet.pspnet.cls[i](x)
+    # apply classification head and ReLU
+    x = model.pspnet.prediction.classification_head(x)
+    x = F.interpolate(x, size=input.size()[2:], mode="bilinear", align_corners=True)
+    x = nn.Softmax(dim=1)(x)
+    x = x.squeeze().cpu().detach().numpy()
     num_cam_rows = int(np.ceil(len(np.unique(seg)) / 3))
     fig, axes = plt.subplots(1 + num_cam_rows, 3, figsize=(12, 10))
     axes[0][0].imshow(get_unnormalized_image(input))
     axes[0][1].imshow(colorize(seg_target.squeeze().cpu().numpy(), palette))
     axes[0][2].imshow(colorize(seg, palette))
-    cam_total = xms.sum()
+    cam_total = x.sum()
     seg_total = 473**2
     row, col = 1, 0
     classes_pred = np.unique(seg)
@@ -256,12 +258,12 @@ def cam(model: PyramidEncodingNetwork, input, seg_target):
     classes_target = classes_target[:-1] if 255 in classes_target else classes_target
     classes_viz = np.unique(np.concatenate([classes_pred, classes_target]))
     for cam_class in classes_viz:
-        cam_class_map = xms[cam_class]
+        cam_class_map = x[cam_class]
         axes[row][col].imshow(cam_class_map)
         dist_prop = np.round((dist[0][cam_class][0][0] * 100), 3)
         cam_prop = np.round(((cam_class_map.sum()/cam_total) * 100), 3)
         seg_prop = np.round(((np.where(seg == cam_class, 1, 0).sum()/seg_total) * 100), 3)
-        axes[row][col].set_xlabel(f"{classes[cam_class]}: true:{dist_prop}%, cam: {cam_prop}%, seg: {seg_prop}% ")
+        axes[row][col].set_xlabel(f"{classes[cam_class].split(';')[0]}: true:{dist_prop}%, cam: {cam_prop}%, seg: {seg_prop}% ")
         col += 1
         if col == 3:
             col = 0

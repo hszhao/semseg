@@ -94,9 +94,9 @@ def categorical_cross_entropy(y_pred, y_true, weights=None, smooth=0):
         ce = -(y_true * torch.log(y_pred)).sum(dim=1)
     return ce.mean()
 
-class PyramidEncodingNetwork(nn.Module):
+class PyramidContextNetwork(nn.Module):
     def __init__(self, layers=50, classes=150, zoom_factor=8, pspnet_weights=None, refit_pspnet=False):
-        super(PyramidEncodingNetwork, self).__init__()
+        super(PyramidContextNetwork, self).__init__()
         self.pspnet = PSPNet(layers=layers, classes=classes, zoom_factor=zoom_factor, pretrained=True)
         if pspnet_weights is not None:
             checkpoint = torch.load(pspnet_weights)['state_dict']
@@ -163,7 +163,7 @@ class PyramidEncodingNetwork(nn.Module):
 
 
 if __name__ == "__main__":
-    model = PyramidEncodingNetwork().to("cuda")
+    model = PyramidContextNetwork().to("cuda")
     x = torch.rand(size=(4, 3, 473, 473)).to("cuda")
     model.forward(x)
     print("Done!")
