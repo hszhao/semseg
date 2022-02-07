@@ -32,7 +32,7 @@ class DistributionMatch(nn.Module):
         self.layer1 = nn.Conv2d(512, 150, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(150)
         self.layer2 = nn.Conv2d(150*3, 150, kernel_size=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(150*3)
+        self.bn2 = nn.BatchNorm2d(150)
         # 150-150 for exp1, 150-k for exp2
         self.layer3 = nn.Conv2d(150, top_k if dist_dim == "k" else 150, kernel_size=1)  
         
@@ -63,9 +63,11 @@ class DistributionMatch(nn.Module):
             x = nn.ReLU()(x)
             x = nn.AdaptiveAvgPool2d((1, 1))(x)
             if self.dist_dim == "all": # exp 1
-                distribution = nn.Softmax(dim=1)(self.layer3(x)) * top_k_mask
+                distribution = nn.Softmax(dim=1)(self.layer3(x))
+                distribution = distribution * top_k_mask
+                distribution = distribution / distribution.sum(dim=1, keepdims=True)  # re-normalize after mask
             else: # exp 2
-                distribution = nn.Softmax(dim=1)(x)
+                distribution = nn.Softmax(dim=1)(self.layer3(x))
                 distribution = mask.scatter_(1, index=ind, src=distribution)
 
         positive_logits = nn.ReLU()(logits)
@@ -133,7 +135,7 @@ class PSPNetContext(nn.Module):
     """
     transfer learn pspnet with trained classification heads to benchmark classification head + presoftmax methods
     """
-    def __init__(self, layers=50, classes=150, zoom_factor=8, pspnet_weights=None, top_k=150, dist_dim="all"):
+    def __init__(self, layers=50, classes=150, zoom_factor=8, pspnet_weights=None, top_k=150, dist_dim="all", loss="cce"):
         super(PSPNetContext, self).__init__()
         self.pspnet = PSPNet(layers=layers, classes=classes, zoom_factor=zoom_factor, pretrained=False)
         if pspnet_weights is not None:
@@ -149,6 +151,7 @@ class PSPNetContext(nn.Module):
         self.dist_dim = dist_dim
         self.combo = DistributionMatch(top_k=top_k, dist_dim=dist_dim) # ContextLogitCombination()
         self.pred = DropoutEnsemble(self.pspnet.cls, n_heads=10)
+        self.loss = categorical_cross_entropy if loss == "cce" else nn.L1Loss()
         self.zoom_factor = zoom_factor
         self.classes = classes
 
@@ -189,6 +192,7 @@ class PSPNetContext(nn.Module):
             loss = None
             # loss = categorical_cross_entropy(dist_pred, distribution_label)
             # loss = nn.MSELoss()(dist_pred, distribution_label)
+            loss = self.loss(dist_pred, distribution_label)
             # main_loss = self.pspnet.pspnet.criterion(x_alt, segmentation_label)
             return x_alt.max(1)[1], loss
         else:

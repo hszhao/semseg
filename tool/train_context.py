@@ -252,9 +252,9 @@ def validate(model):
 
         # output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=context_target)
         # output, output_alt = model(input, distributions=context_target)
-        # _, output = model(input, distributions=None)
+        _, output = model(input, distributions=None)
 
-        output, output_alt = model(input, distributions=None)
+        # output, output_alt = model(input, distributions=None)
 
         # output, classifications = model(input)
 
@@ -276,14 +276,14 @@ def validate(model):
         # residuals.append(residual.squeeze())
 
         # context model
-        output_alt = output_alt.max(1)[1] #torch.from_numpy(np.expand_dims(output_alt, 0)).to("cuda").max(3)[1]
-        intersection2, union2, target2 = intersectionAndUnionGPU(output_alt, seg_target, 150, 255)
+        # output_alt = output_alt.max(1)[1] #torch.from_numpy(np.expand_dims(output_alt, 0)).to("cuda").max(3)[1]
+        # intersection2, union2, target2 = intersectionAndUnionGPU(output_alt, seg_target, 150, 255)
         
-        intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
-        intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
+        # intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
+        # intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
 
-        ious2.append(intersection2 / (union2 + 1e-10))
-        accs2.append(intersection2 / (target2 + 1e-10))
+        # ious2.append(intersection2 / (union2 + 1e-10))
+        # accs2.append(intersection2 / (target2 + 1e-10))
 
         # context + corrections (novoid / top_k prediction experiment)
         # updated_context = np.asarray(updated_context).reshape(context_target.shape)
@@ -303,7 +303,7 @@ def validate(model):
 
         batch_time.update(time.time() - end)
         end = time.time()
-        print(f"{i+1}/{len(val_loader)}")
+        # print(f"{i+1}/{len(val_loader)}")
 
     iou_class = intersection_meter.sum / (union_meter.sum + 1e-10)
     accuracy_class = intersection_meter.sum / (target_meter.sum + 1e-10)
@@ -314,12 +314,12 @@ def validate(model):
 
     # print("Mean auc", np.mean(auc))
 
-    iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
-    accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
-    mIoU2 = np.mean(iou_class2)
-    mAcc2 = np.mean(accuracy_class2)
-    allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
-    print('Val result (+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
+    # iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
+    # accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
+    # mIoU2 = np.mean(iou_class2)
+    # mAcc2 = np.mean(accuracy_class2)
+    # allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
+    # print('Val result (+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
 
     # iou_class3 = intersection_meter3.sum / (union_meter3.sum + 1e-10)
     # accuracy_class3 = intersection_meter3.sum / (target_meter3.sum + 1e-10)
@@ -329,7 +329,7 @@ def validate(model):
     # print('Val result (+novoid+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU3, mAcc3, allAcc3))
     return mIoU, mAcc, allAcc
 
-def main(model, dist_dim="all", top_k=150):
+def main(model, dist_dim="all", top_k=150, loss="cce"):
     learning_rate = 5e-4
     # MODIFY TRAINED PARAMETERS FOR EXP HERE
     # modules_new = [model.pyramid.class_head, model.pyramid.conv1]
@@ -375,16 +375,18 @@ def main(model, dist_dim="all", top_k=150):
         mIoU, mAcc, allAcc = validate(model)
         val_epochs.append((mIoU, mAcc, allAcc))
         
-    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"model_{dist_dim}_{top_k}.pth")
+    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"model_{dist_dim}_{top_k}_{loss}.pth")
     print(f"VALIDATION HISTORY for {dist_dim}/{top_k}: {val_epochs}")
     return val_epochs
 
 if __name__ == "__main__":
-    dist_dim, top_k = "all", 150
-    if len(sys.argv > 1):
+    dist_dim, top_k, loss = "all", 150, "cce"
+    if len(sys.argv) > 1:
+        print("parsing arguments")
         dist_dim = sys.argv[1]
         top_k = int(sys.argv[2])
-        print(f"Parsed arguments: {dist_dim}, {top_k}")
-    model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth", top_k = top_k, dist_dim=dist_dim).to("cuda")
-    val_hist_conv = main(model_conv, dist_dim, top_k)
+        loss = sys.argv[3]
+    print(f"Running with arguments: dist:{dist_dim}, k:{top_k}, loss:{loss}")
+    model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth", top_k=top_k, dist_dim=dist_dim, loss=loss).to("cuda")
+    val_hist_conv = main(model_conv, dist_dim, top_k, loss)
     print(val_hist_conv)  # print val results again
