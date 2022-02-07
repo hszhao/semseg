@@ -1,5 +1,6 @@
 # "pyramid encoding network"
 # simplifications: using GAP rather than encoding layer
+# TODO revisit; not currently used in experiments
 
 from typing import final
 import torch

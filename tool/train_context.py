@@ -1,7 +1,6 @@
 import os
 import random
 import time
-from turtle import update
 import cv2
 import numpy as np
 import logging
@@ -31,8 +30,8 @@ from tool.visualization import dist_prediction_visualization, cam
 
 from model.pspnet_context import PSPNetContext
 from model.pspnet_ms_context import PyramidContextNetwork
-from model.encnet import EncNet
-from model.fcn import FCN
+# from model.encnet import EncNet
+# from model.fcn import FCN
 
 import seaborn as sns
 
@@ -50,7 +49,7 @@ std = [item * value_scale for item in std]
 data_root = "dataset/ade20k"
 train_list = "dataset/ade20k/list/training.txt"
 valid_list = "dataset/ade20k/list/validation.txt"
-batch_size = 8
+batch_size = 16
 epochs = 10
 n_classes = 150
 
@@ -253,7 +252,9 @@ def validate(model):
 
         # output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=context_target)
         # output, output_alt = model(input, distributions=context_target)
-        _, output = model(input, distributions=None)
+        # _, output = model(input, distributions=None)
+
+        output, output_alt = model(input, distributions=None)
 
         # output, classifications = model(input)
 
@@ -275,14 +276,14 @@ def validate(model):
         # residuals.append(residual.squeeze())
 
         # context model
-        # output_alt = output_alt.max(1)[1] #torch.from_numpy(np.expand_dims(output_alt, 0)).to("cuda").max(3)[1]
-        # intersection2, union2, target2 = intersectionAndUnionGPU(output_alt, seg_target, 150, 255)
+        output_alt = output_alt.max(1)[1] #torch.from_numpy(np.expand_dims(output_alt, 0)).to("cuda").max(3)[1]
+        intersection2, union2, target2 = intersectionAndUnionGPU(output_alt, seg_target, 150, 255)
         
-        # intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
-        # intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
+        intersection2, union2, target2 = intersection2.cpu().numpy(), union2.cpu().numpy(), target2.cpu().numpy()
+        intersection_meter2.update(intersection2), union_meter2.update(union2), target_meter2.update(target2)
 
-        # ious2.append(intersection2 / (union2 + 1e-10))
-        # accs2.append(intersection2 / (target2 + 1e-10))
+        ious2.append(intersection2 / (union2 + 1e-10))
+        accs2.append(intersection2 / (target2 + 1e-10))
 
         # context + corrections (novoid / top_k prediction experiment)
         # updated_context = np.asarray(updated_context).reshape(context_target.shape)
@@ -313,12 +314,12 @@ def validate(model):
 
     # print("Mean auc", np.mean(auc))
 
-    # iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
-    # accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
-    # mIoU2 = np.mean(iou_class2)
-    # mAcc2 = np.mean(accuracy_class2)
-    # allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
-    # print('Val result (+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
+    iou_class2 = intersection_meter2.sum / (union_meter2.sum + 1e-10)
+    accuracy_class2 = intersection_meter2.sum / (target_meter2.sum + 1e-10)
+    mIoU2 = np.mean(iou_class2)
+    mAcc2 = np.mean(accuracy_class2)
+    allAcc2 = sum(intersection_meter2.sum) / (sum(target_meter2.sum) + 1e-10)
+    print('Val result (+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU2, mAcc2, allAcc2))
 
     # iou_class3 = intersection_meter3.sum / (union_meter3.sum + 1e-10)
     # accuracy_class3 = intersection_meter3.sum / (target_meter3.sum + 1e-10)
@@ -328,7 +329,7 @@ def validate(model):
     # print('Val result (+novoid+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU3, mAcc3, allAcc3))
     return mIoU, mAcc, allAcc
 
-def main(model):
+def main(model, dist_dim="all", top_k=150):
     learning_rate = 5e-4
     # MODIFY TRAINED PARAMETERS FOR EXP HERE
     # modules_new = [model.pyramid.class_head, model.pyramid.conv1]
@@ -340,7 +341,7 @@ def main(model):
         params_list.append(dict(params=module.parameters(), lr=learning_rate * 10))
     # # for module in modules_old:
     # #     params_list.append(dict(params=module.parameters(), lr=learning_rate))
-    optimizer = torch.optim.Adam(params_list, lr=learning_rate, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(params_list, lr=learning_rate, weight_decay=0)
 
     train_epochs = [ ]
     val_epochs = [ ]
@@ -363,24 +364,27 @@ def main(model):
     train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, context_x=False, context_y=True, context_type="distribution")
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
 
-    viz_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=viz_transform, context_x=False, context_y=True, context_type="distribution")
-    viz_loader = torch.utils.data.DataLoader(viz_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+    # for CAM and other visualization
+    # viz_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=viz_transform, context_x=False, context_y=True, context_type="distribution")
+    # viz_loader = torch.utils.data.DataLoader(viz_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
     # debug(viz_loader, model)
 
     for epoch in range(0, epochs):
-        mIoU, mAcc, allAcc = validate(model)
-        val_epochs.append((mIoU, mAcc, allAcc))
         loss, t_mIoU, t_mAcc, t_allAcc = train(train_loader, model, optimizer, epoch)
         train_epochs.append((loss, t_mIoU, t_mAcc, t_allAcc))
-        # mIoU, mAcc, allAcc = validate(model)
-        # val_epochs.append((mIoU, mAcc, allAcc))
+        mIoU, mAcc, allAcc = validate(model)
+        val_epochs.append((mIoU, mAcc, allAcc))
         
-        
-    # torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"exp/ade20k/pspnet50/model/asdfasdf.pth")
+    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"model_{dist_dim}_{top_k}.pth")
+    print(f"VALIDATION HISTORY for {dist_dim}/{top_k}: {val_epochs}")
     return val_epochs
 
 if __name__ == "__main__":
-
-    model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth").to("cuda")
-    val_hist_conv = main(model_conv)
-    print(val_hist_conv)
+    dist_dim, top_k = "all", 150
+    if len(sys.argv > 1):
+        dist_dim = sys.argv[1]
+        top_k = int(sys.argv[2])
+        print(f"Parsed arguments: {dist_dim}, {top_k}")
+    model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth", top_k = top_k, dist_dim=dist_dim).to("cuda")
+    val_hist_conv = main(model_conv, dist_dim, top_k)
+    print(val_hist_conv)  # print val results again
