@@ -32,7 +32,12 @@ def categorical_cross_entropy(y_pred, y_true, weights=None, smooth=0):
 
 def earth_mover_distance(y_pred, y_true):
     """EMD Loss"""
-    return torch.mean(torch.square(torch.cumsum(y_pred, dim=1) - torch.cumsum(y_true, dim=1)))
+    cdf_pred = torch.cumsum(y_pred, dim=1)
+    cdf_true = torch.cumsum(y_true, dim=1)
+    # correct for when no label in image, 0-sum distribution
+    valid_mask = torch.sum(y_true, dim=1, keepdim=True)  
+    cdf_pred = cdf_pred * valid_mask
+    return torch.mean(torch.square(cdf_pred - cdf_true))
 
 
 class DistributionMatch(nn.Module):
@@ -109,7 +114,7 @@ class DistributionMatch(nn.Module):
 
         if label is not None and k_distribution is not None:
             top_k_label = label * top_k_mask  # GT distribution of top_k predicted classes
-            top_k_label = top_k_label / top_k_label.sum(dim=1, keepdims=True)  # renormalize so that relative distribution among k sums to 1
+            top_k_label = top_k_label / (top_k_label.sum(dim=1, keepdims=True) + 1e-10)  # renormalize so that relative distribution among k sums to 1
             top_k_label, _ = torch.topk(top_k_label, dim=1, k=self.top_k, largest=True, sorted=True)
             top_k_loss = earth_mover_distance(k_distribution, top_k_label)
             return corrected_distribution, top_k_loss

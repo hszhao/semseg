@@ -355,7 +355,7 @@ def main(model, dist_dim="all", top_k=150, decay=0):
         train_epochs.append((loss, t_mIoU, t_allAcc))
         print(">>> COMPUTING VALIDATION ERROR <<<")
         val_loss, val_mIoU, val_mAcc, val_allAcc = validate(model, data_list=valid_list)
-        val_score = (val_mIoU + val_mAcc) / 2
+        val_score = (val_mIoU + val_allAcc) / 2
         print(f">>> VALIDATION SCORE FOR EPOCH {epoch}: {np.round(val_score, 4)}, loss: {val_loss}")
         val_epochs.append((val_mIoU, val_allAcc, val_score))
         print(">>> COMPUTING TEST ERROR <<<")
