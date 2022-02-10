@@ -53,7 +53,7 @@ def vector_list_to_mat(vectors):
     rows.append(curr_row)
     return np.asarray(rows)
 
-def extract_mask_distributions(mask, head_sizes=[1], top_k=5, predicted_mask=None):
+def extract_mask_distributions(mask, head_sizes=[1], top_k=150):
     """
     mask: ground truth annotation (either BxWxH or WxH)
     head_sizes: list of scales at which to extract the distribution of pixels for each class
@@ -61,14 +61,11 @@ def extract_mask_distributions(mask, head_sizes=[1], top_k=5, predicted_mask=Non
     predicted_mask: if supplied, take the top classes from the predicted segmentation mask rather than ground truth annotation
     """
     if len(mask.size()) == 3: # if [B x W x H] rather than single sample [ W x H ]
-        return [ extract_mask_distributions(mask[i], top_k=top_k, head_sizes=head_sizes, predicted_mask=predicted_mask[i]) for i in range(mask.size()[0]) ]
+        return [ extract_mask_distributions(mask[i], top_k=top_k, head_sizes=head_sizes) for i in range(mask.size()[0]) ]
     dist_labels = []
     for s in head_sizes:
         mat = extract_mask_distribution(mask, s)
         class_order = (-mat.flatten()).argsort()
-        if predicted_mask is not None:
-            pred_dist = extract_mask_distribution(predicted_mask, s)
-            class_order = (-pred_dist.flatten()).argsort()
         class_mask = np.where(np.in1d(np.arange(150), class_order[:top_k]), np.ones(150), np.zeros(150))
         class_mask = np.expand_dims(np.expand_dims(class_mask, -1), -1)
         masked_dist = class_mask * mat 

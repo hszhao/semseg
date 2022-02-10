@@ -177,7 +177,7 @@ def scale_process(model, image, classes, crop_h, crop_w, h, w, mean, std=None, s
     prediction = cv2.resize(prediction_crop, (w, h), interpolation=cv2.INTER_LINEAR)
     return prediction
 
-def multiscale_prediction(model, image, classes=150, base_size=512, crop_h=473, crop_w=473, scales=[0.5, 0.75, 1.0, 1.25, 1.5, 1.75]):
+def multiscale_prediction(model, image, dist_fix = False, classes=150, base_size=512, crop_h=473, crop_w=473, scales=[0.5, 0.75, 1.0, 1.25, 1.5, 1.75]):
     mean = [0.485, 0.456, 0.406]
     # mean = [item * 255 for item in mean]
     std = [0.229, 0.224, 0.225]
@@ -186,6 +186,7 @@ def multiscale_prediction(model, image, classes=150, base_size=512, crop_h=473, 
     image = np.transpose(image, (1, 2, 0))
     h, w, _ = image.shape
     prediction = np.zeros((h, w, classes), dtype=float)
+    dist = np.zeros(classes, dtype=float)
     for scale in scales:
         long_size = round(scale * base_size)
         new_h = long_size
@@ -195,9 +196,19 @@ def multiscale_prediction(model, image, classes=150, base_size=512, crop_h=473, 
         else:
             new_h = round(long_size/float(w)*h)
         image_scale = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        prediction += scale_process(model, image_scale, classes, crop_h, crop_w, h, w, mean, std)
+        scale_prediction = scale_process(model, image_scale, classes, crop_h, crop_w, h, w, mean, std)
+        scale_dist = np.mean(scale_prediction, axis=(0,1))
+        dist += scale_dist
+        prediction += scale_prediction
     prediction /= len(scales)
-    return prediction
+    dist /= len(scales)
+    corrected_prediction = None
+    if dist_fix:
+        prediction_dist = np.mean(prediction, axis=(0,1))
+        correction = dist - prediction_dist
+        correction = correction.reshape((1, 1, -1))
+        corrected_prediction = prediction + correction
+    return prediction, corrected_prediction
 
 def test(test_loader, data_list, model, classes, mean, std, base_size, crop_h, crop_w, scales, gray_folder, color_folder, colors):
     logger.info('>>>>>>>>>>>>>>>> Start Evaluation >>>>>>>>>>>>>>>>')

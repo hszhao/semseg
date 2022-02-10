@@ -77,9 +77,9 @@ class SemData(Dataset):
             if self.context_type == "classification":
                 context = extract_mask_classes(label)
             elif self.context_type == "distribution":
-                context = extract_mask_distributions(label, head_sizes=[1], top_k=5)
+                context = extract_mask_distributions(label, head_sizes=[1])
             elif self.context_type == "both":
-                context = (extract_mask_classes(label, head_sizes=[1]), extract_mask_distributions(label, head_sizes=[1], top_k=5))
+                context = (extract_mask_classes(label, head_sizes=[1]), extract_mask_distributions(label, head_sizes=[1]))
             if self.context_x:
                 image = (image, context)
             if self.context_y:

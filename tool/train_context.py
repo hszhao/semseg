@@ -25,8 +25,8 @@ sys.path.insert(1, os.path.abspath('..'))
 from util import dataset, transform, config
 from util.util import AverageMeter, poly_learning_rate, intersectionAndUnionGPU, find_free_port, colorize
 from util.classification_utils import extract_mask_distributions, extract_adjusted_distribution
-from tool.test import multiscale_prediction
-from tool.visualization import dist_prediction_visualization, cam
+#from tool.test import multiscale_prediction
+#from tool.visualization import dist_prediction_visualization, cam
 
 from model.pspnet_context import PSPNetContext
 from model.pspnet_ms_context import PyramidContextNetwork
@@ -47,10 +47,12 @@ std = [0.229, 0.224, 0.225]
 std = [item * value_scale for item in std]
 
 data_root = "dataset/ade20k"
-train_list = "dataset/ade20k/list/training.txt"
-valid_list = "dataset/ade20k/list/validation.txt"
+# parition 10% of training set for hyperparameter tuning, to report real results on validation set.
+train_list = "dataset/ade20k/list/training_alt.txt"
+valid_list = "dataset/ade20k/list/validation_alt.txt"
+test_list = "dataset/ade20k/list/validation.txt"
 batch_size = 16
-epochs = 10
+epochs = 30
 n_classes = 150
 
 def mean_auc(classification_labels, classification_predictions):
@@ -92,18 +94,18 @@ def distribution_distance(distribution_labels, distribution_predictions):
         distances.append(distance)
     return distances
 
-def debug(data_loader, model, i=3):
-    """
-    run visualization fn (e.g. CAM) on ith input of data loader
-    """
-    model.eval()
-    for idx, (input, target) in enumerate(data_loader):
-        input = input.cuda(non_blocking=True)
-        seg_target, class_target = target
-        seg_target = seg_target.cuda(non_blocking=True)
-        if idx == i:
-            cam(model, input, seg_target)
-            break
+# def debug(data_loader, model, i=3):
+#     """
+#     run visualization fn (e.g. CAM) on ith input of data loader
+#     """
+#     model.eval()
+#     for idx, (input, target) in enumerate(data_loader):
+#         input = input.cuda(non_blocking=True)
+#         seg_target, class_target = target
+#         seg_target = seg_target.cuda(non_blocking=True)
+#         if idx == i:
+#             cam(model, input, seg_target)
+#             break
 
 def train(train_loader, model, optimizer, epoch):
     batch_time = AverageMeter()
@@ -129,23 +131,15 @@ def train(train_loader, model, optimizer, epoch):
         seg_target = seg_target.cuda(non_blocking=True)
         context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
         context_target = context_target[0] # only care single scale
-        # segmentation, main_loss = model(x=input, y=seg_target, classifications=classifications)
-        # segmentation, aux, classification, main_loss = model(input, seg_target)
-        # segmentation, classifications, main_loss, aux_loss, class_loss = model(input, [seg_target, context_target])
-        segmentation, loss = model(input, [seg_target, context_target])
-        # loss = class_loss # torch.mean(main_loss + (0.5 * class_loss) + (0.4 * aux_loss))
 
-        # segmentation, main_loss = model(input, seg_target, distributions=context_target[0])
+        segmentation, loss = model(input, [seg_target, context_target])
         loss = torch.mean(loss)
-        #loss.requires_grad = True
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         n = input.size(0)
-
-        # segmentation = segmentation.max(1)[1]
 
         intersection, union, target = intersectionAndUnionGPU(segmentation, seg_target, 150, 255)
 
@@ -173,9 +167,6 @@ def train(train_loader, model, optimizer, epoch):
         t_m, t_s = divmod(remain_time, 60)
         t_h, t_m = divmod(t_m, 60)
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-
-        # print('Epoch: [{}/{}][{}/{}] '
-        #         'Auc: {}'.format(epoch+1, epochs, i + 1, len(train_loader), auc))
 
         # full printout for segmentation
         print('Epoch: [{}/{}][{}/{}] '
@@ -205,15 +196,15 @@ def train(train_loader, model, optimizer, epoch):
     mAcc = np.mean(accuracy_class)
     allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
     print('Train result at epoch [{}/{}]: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(epoch+1, epochs, mIoU, mAcc, allAcc))
-    return main_loss_meter.avg, mIoU, mAcc, allAcc
+    return main_loss_meter.avg, np.round(mIoU, 4), np.round(mAcc, 4), np.round(allAcc, 4)
 
-def validate(model):
+def validate(model, data_list=valid_list):
     val_transform = transform.Compose([
         transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
-    val_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=val_transform, context_x=False, context_y=True, context_type="classification")
-    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None)
+    val_data = dataset.SemData(split='val', data_root=data_root, data_list=data_list, transform=val_transform, context_x=False, context_y=True, context_type="distribution")
+    val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True, sampler=None)
     batch_time = AverageMeter()
     data_time = AverageMeter()
     intersection_meter = AverageMeter()
@@ -225,6 +216,7 @@ def validate(model):
     intersection_meter3 = AverageMeter()
     union_meter3 = AverageMeter()
     target_meter3 = AverageMeter()
+    loss_meter = AverageMeter()
 
     model.eval()
     end = time.time()
@@ -234,12 +226,7 @@ def validate(model):
     accs2 = []
     ious3 = []
     accs3 = []
-
-    context_pred_baseline = []
-    context_pred_trained = []
-    context_targets = []
-
-    residuals = []
+    
     aucs = []
     for i, (input, target) in enumerate(val_loader):
         # seg_target = target
@@ -250,13 +237,10 @@ def validate(model):
         context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
         context_target = context_target[0]  # only look at global scale for now
 
-        # output, output_alt, output_alt_gt, predicted_distribution, distributions = model(input, distributions=context_target)
-        # output, output_alt = model(input, distributions=context_target)
-        _, output = model(input, distributions=None)
+        _, output, loss = model(input, [seg_target, context_target])
 
-        # output, output_alt = model(input, distributions=None)
-
-        # output, classifications = model(input)
+        n = input.size(0)
+        loss_meter.update(loss.item(), n)
 
         # auc = mean_auc(context_target, classifications)
         # aucs.append(auc)
@@ -310,7 +294,7 @@ def validate(model):
     mIoU = np.mean(iou_class)
     mAcc = np.mean(accuracy_class)
     allAcc = sum(intersection_meter.sum) / (sum(target_meter.sum) + 1e-10)
-    print('Val result (baseline): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
+    print('Val result: mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU, mAcc, allAcc))
 
     # print("Mean auc", np.mean(auc))
 
@@ -327,24 +311,28 @@ def validate(model):
     # mAcc3 = np.mean(accuracy_class3)
     # allAcc3 = sum(intersection_meter3.sum) / (sum(target_meter3.sum) + 1e-10)
     # print('Val result (+novoid+aggregation): mIoU/mAcc/allAcc {:.4f}/{:.4f}/{:.4f}.'.format(mIoU3, mAcc3, allAcc3))
-    return mIoU, mAcc, allAcc
+    return loss_meter.avg, np.round(mIoU, 4), np.round(mAcc, 4), np.round(allAcc, 4)
 
-def main(model, dist_dim="all", top_k=150, loss="cce"):
-    learning_rate = 5e-4
-    # MODIFY TRAINED PARAMETERS FOR EXP HERE
-    # modules_new = [model.pyramid.class_head, model.pyramid.conv1]
-    modules_new = [model.combo.layer1, model.combo.bn1, model.combo.layer2, model.combo.bn2, model.combo.layer3]
-
-    # modules_old = [model.pspnet.layer0, model.pspnet.layer1, model.pspnet.layer2, model.pspnet.layer3, model.pspnet.layer4]
+def main(model, dist_dim="all", top_k=150, decay=0):
+    # define optimizer
+    learning_rate = 1e-3
+    modules_new = [model.combo.layer1, model.combo.norm1, model.combo.layer2, model.combo.norm2, model.combo.layer3]
     params_list = []
     for module in modules_new:
-        params_list.append(dict(params=module.parameters(), lr=learning_rate * 10))
-    # # for module in modules_old:
-    # #     params_list.append(dict(params=module.parameters(), lr=learning_rate))
-    optimizer = torch.optim.Adam(params_list, lr=learning_rate, weight_decay=0)
+        params_list.append(dict(params=module.parameters(), lr=learning_rate))
+    optimizer = torch.optim.Adam(params_list, lr=learning_rate, weight_decay=decay)
+    
+    # viz_transform = transform.Compose([
+    #     transform.RandScale([1.1, 1.2  ]),
+    #     transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
+    #     transform.ToTensor(),
+    #     transform.Normalize(mean=mean, std=std)
+    # ])
+    # for CAM and other visualization
+    # viz_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=viz_transform, context_x=False, context_y=True, context_type="distribution")
+    # viz_loader = torch.utils.data.DataLoader(viz_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+    # debug(viz_loader, model)
 
-    train_epochs = [ ]
-    val_epochs = [ ]
     train_transform = transform.Compose([
         transform.RandScale([0.5, 2.0]),
         transform.RandRotate([-10, 10], padding=mean, ignore_label=255),
@@ -354,39 +342,42 @@ def main(model, dist_dim="all", top_k=150, loss="cce"):
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)
     ])
-    viz_transform = transform.Compose([
-        transform.RandScale([1.1, 1.2  ]),
-        transform.Crop([473, 473], crop_type='center', padding=mean, ignore_label=255),
-        transform.ToTensor(),
-        transform.Normalize(mean=mean, std=std)
-    ])
 
     train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, context_x=False, context_y=True, context_type="distribution")
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, sampler=None, drop_last=True)
 
-    # for CAM and other visualization
-    # viz_data = dataset.SemData(split='val', data_root=data_root, data_list=valid_list, transform=viz_transform, context_x=False, context_y=True, context_type="distribution")
-    # viz_loader = torch.utils.data.DataLoader(viz_data, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True, sampler=None, drop_last=True)
-    # debug(viz_loader, model)
-
+    train_epochs = [ ]
+    val_epochs = [ ]
+    test_epochs = [ ]
     for epoch in range(0, epochs):
+        print(">>> BEGIN TRAIN EPOCH <<<")
         loss, t_mIoU, t_mAcc, t_allAcc = train(train_loader, model, optimizer, epoch)
-        train_epochs.append((loss, t_mIoU, t_mAcc, t_allAcc))
-        mIoU, mAcc, allAcc = validate(model)
-        val_epochs.append((mIoU, mAcc, allAcc))
+        train_epochs.append((loss, t_mIoU, t_allAcc))
+        print(">>> COMPUTING VALIDATION ERROR <<<")
+        val_loss, val_mIoU, val_mAcc, val_allAcc = validate(model, data_list=valid_list)
+        val_score = (val_mIoU + val_mAcc) / 2
+        print(f">>> VALIDATION SCORE FOR EPOCH {epoch}: {np.round(val_score, 4)}, loss: {val_loss}")
+        val_epochs.append((val_mIoU, val_allAcc, val_score))
+        print(">>> COMPUTING TEST ERROR <<<")
+        test_loss, test_mIoU, test_mAcc, test_allAcc = validate(model, data_list=test_list)
+        test_score = (test_mIoU + test_allAcc) / 2
+        print(f">>> TEST SCORE FOR EPOCH {epoch}: {np.round(test_score, 4)}, loss: {test_loss}")
+        test_epochs.append((test_mIoU, test_allAcc, test_score))
+        torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"psp_d:{dist_dim}_k{top_k}_n:{norm}_d:{decay}_e:{epoch}.pth")
         
-    torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"model_{dist_dim}_{top_k}_{loss}.pth")
-    print(f"VALIDATION HISTORY for {dist_dim}/{top_k}: {val_epochs}")
-    return val_epochs
+    print(f"Validation Epochs: {val_epochs}")
+    print(f"Test Epochs: {test_epochs}")
+    return val_epochs, test_epochs
 
 if __name__ == "__main__":
-    dist_dim, top_k, loss = "all", 150, "cce"
+    dist_dim, top_k, norm, decay = "k", 5, "ln", 0
     if len(sys.argv) > 1:
-        print("parsing arguments")
+        print("Parsing arguments (data_dim | k | norm | weight decay)")
         dist_dim = sys.argv[1]
         top_k = int(sys.argv[2])
-        loss = sys.argv[3]
-    print(f"Running with arguments: dist:{dist_dim}, k:{top_k}, loss:{loss}")
-    model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth", top_k=top_k, dist_dim=dist_dim, loss=loss).to("cuda")
-    val_hist_conv = main(model_conv, dist_dim, top_k, loss)
+        norm = sys.argv[3]
+        decay = float(sys.argv[4])
+    print(f"Running with arguments: dist:{dist_dim}, k:{top_k}, norm:{norm}, decay:{decay}")
+    model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth", top_k=top_k, dist_dim=dist_dim, norm=norm).to("cuda")
+    val_hist_conv = main(model_conv, dist_dim, top_k, decay)
     print(val_hist_conv)  # print val results again
