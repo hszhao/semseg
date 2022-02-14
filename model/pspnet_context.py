@@ -60,15 +60,9 @@ class DistributionMatch(nn.Module):
         self.top_k = top_k
         self.correction_mode = correction_mode
 
-        # self.embedding = nn.Conv2d(150, 512, kernel_size=1, bias=True)
         self.norm = (norm != "none")
 
-        self.norm1 = nn.BatchNorm2d(300) if norm == "bn" else nn.LayerNorm([300, 60, 60])
-        self.norm2 = nn.BatchNorm2d(300) if norm == "bn" else nn.LayerNorm([300, 60, 60])
-
-        self.layer1 = nn.Conv2d(512, 300, kernel_size=1, bias=not self.norm)
-        self.layer2 = nn.Conv2d(600, 300, kernel_size=1, bias=not self.norm)
-        self.layer3 = nn.Conv2d(300, top_k, kernel_size=1, bias=True)
+        self.layer1 = nn.Conv2d(512, 150, kernel_size=1, bias=True)
 
 
     def forward(self, pre_cls, logits, distribution, label=None):
@@ -86,40 +80,38 @@ class DistributionMatch(nn.Module):
         k_onehot = torch.mean(torch.transpose(nn.functional.one_hot(ind, num_classes=150), 1, -1).float(), dim=-1, keepdims=True).squeeze(-1)
         top_k_threshold = torch.min(top_k, dim=1, keepdim=True)[0]
         top_k_mask = torch.where(softmax_distribution > top_k_threshold, torch.ones_like(softmax_distribution), torch.zeros_like(softmax_distribution))
-        k_distribution = None
         
+        k_distribution = None
+        loss = None
+
         if distribution is None:
-            # information from penultimate features
-            x = self.layer1(pre_cls)
-            x = self.norm1(x) if self.norm else x
-            x = nn.ReLU()(x)
-            # use this information along with logits/softmax to compute offset
-            feat = torch.cat([x, logits, softmax], dim=1)
-            x = self.layer2(feat)
-            x = self.norm2(x) if self.norm else x
-            x = nn.ReLU()(x)
-            x = nn.AdaptiveAvgPool2d((1, 1))(x)
-            if self.dist_dim == "all": # exp 1
-                distribution = nn.Softmax(dim=1)(self.layer3(x))
-                distribution = distribution * top_k_mask
-                distribution = distribution / distribution.sum(dim=1, keepdims=True)  # re-normalize after mask
-            else: # exp 2
-                k_distribution = nn.Softmax(dim=1)(self.layer3(x))  # for loss
-                distribution = mask.scatter_(1, index=ind, src=k_distribution)  # for correction
+            # learn dist based on pre_cls features and existing logit prediction
+            x = self.layer1(pre_cls) + logits
+            x = nn.Softmax(dim=1)(x)
+            # get predicted distribution
+            distribution = nn.AdaptiveAvgPool2d((1,1))(x)
+            # convert to top-k distribution
+            distribution = distribution * top_k_mask
+            distribution = distribution / distribution.sum(dim=1, keepdims=True)
+            k_distribution, _ = torch.topk(distribution, dim=1, k=self.top_k, largest=True, sorted=True)
+
+            # compute loss
+            label = label * top_k_mask  # GT distribution of top_k predicted classes
+            label = label / (label.sum(dim=1, keepdims=True) + 1e-12)  # renormalize so that relative distribution among k sums to 1
+            k_label, _ = torch.topk(label, dim=1, k=self.top_k, largest=True, sorted=True)
+
+            loss = categorical_cross_entropy(k_distribution, k_label)
+            # if self.dist_dim == "all":
+            #     loss = categorical_cross_entropy(distribution, label)  # CCE across vector dim C
+            # else:
+            #     loss = earth_mover_distance(k_distribution, k_label)  # EMD across vector dim K
 
         dist_residual = distribution - softmax_distribution
         dist_residual = dist_residual * top_k_mask  # mask out updates for classes outside top k
         # dist_residual_upsample = F.interpolate(dist_residual, size=softmax.size()[2:], mode="nearest")
         corrected_distribution = softmax + dist_residual # if self.correction_mode == "softmax" else logits + dist_residual_upsample
 
-        if label is not None and k_distribution is not None:
-            top_k_label = label * top_k_mask  # GT distribution of top_k predicted classes
-            top_k_label = top_k_label / (top_k_label.sum(dim=1, keepdims=True) + 1e-10)  # renormalize so that relative distribution among k sums to 1
-            top_k_label, _ = torch.topk(top_k_label, dim=1, k=self.top_k, largest=True, sorted=True)
-            top_k_loss = earth_mover_distance(k_distribution, top_k_label)
-            return corrected_distribution, top_k_loss
-
-        return corrected_distribution
+        return corrected_distribution, loss
 
 class DropoutEnsemble(nn.Module):
     def __init__(self, cls, n_heads=10):

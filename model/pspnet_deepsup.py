@@ -115,15 +115,27 @@ class PSPNetDeepSup(nn.Module):
 
         if self.training:
             l1, s1, c1 = self.l1_sup(x1)
+            del x1
             l2, s2, c2 = self.l2_sup(x2)
+            del x2
             l3, s3, c3 = self.l3_sup(x3)
+            del x3
             l4, s4, c4 = self.l4_sup(x4)
+            del x4
+            torch.cuda.empty_cache()
 
             seg_losses = 0
+            seg_dist = nn.AdaptiveAvgPool2d((1,1))(nn.Softmax(dim=1)(x)).detach()
             for seg in [s1, s2, s3, s4]:            
-                seg = F.interpolate(seg, size=(h, w), mode='bilinear', align_corners=True)
-                seg_losses += self.pspnet.criterion(seg, segmentation_label)
+                seg = nn.AdaptiveAvgPool2d((1,1))(nn.Softmax(dim=1)(seg))
+                seg_losses += categorical_cross_entropy(seg, seg_dist)
             seg_losses /= 4
+
+            del s1
+            del s2
+            del s3
+            del s4
+            torch.cuda.empty_cache()
 
             class_losses = 0
             for cls in [c1, c2, c3, c4]:
@@ -131,12 +143,19 @@ class PSPNetDeepSup(nn.Module):
             class_losses /= 4
             
             hint_losses = 0
-            for feat in [l1, l2, l3, l4]:
-                target_feat = final_feat.detach()
-                hint_losses += torch.mean(torch.square(feat - target_feat))
-            hint_losses /= 4
+            # target_feat = final_feat.detach()
+            # for feat in [l1, l2, l3, l4]:
+            #     feat = F.interpolate(feat, size=(60, 60), mode='bilinear', align_corners=True)
+            #     hint_losses += torch.mean(torch.square(feat - target_feat))
+            # hint_losses /= 4
+
+            del l1
+            del l2
+            del l3
+            del l4
+            torch.cuda.empty_cache()
 
             main_loss = self.pspnet.criterion(x, segmentation_label) 
-            return x.max(1)[1], main_loss, seg_losses, class_losses, hint_losses
+            return x.max(1)[1], main_loss, seg_losses, class_losses# , hint_losses
         else:
             return x

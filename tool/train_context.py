@@ -52,7 +52,7 @@ train_list = "dataset/ade20k/list/training_alt.txt"
 valid_list = "dataset/ade20k/list/validation_alt.txt"
 test_list = "dataset/ade20k/list/validation.txt"
 batch_size = 16
-epochs = 30
+epochs = 10
 n_classes = 150
 
 def mean_auc(classification_labels, classification_predictions):
@@ -315,8 +315,8 @@ def validate(model, data_list=valid_list):
 
 def main(model, dist_dim="all", top_k=150, decay=0):
     # define optimizer
-    learning_rate = 1e-3
-    modules_new = [model.combo.layer1, model.combo.norm1, model.combo.layer2, model.combo.norm2, model.combo.layer3]
+    learning_rate = 2e-3
+    modules_new = [model.combo.layer1, model.combo.layer2]
     params_list = []
     for module in modules_new:
         params_list.append(dict(params=module.parameters(), lr=learning_rate))
@@ -363,20 +363,20 @@ def main(model, dist_dim="all", top_k=150, decay=0):
         test_score = (test_mIoU + test_allAcc) / 2
         print(f">>> TEST SCORE FOR EPOCH {epoch}: {np.round(test_score, 4)}, loss: {test_loss}")
         test_epochs.append((test_mIoU, test_allAcc, test_score))
-        torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"psp_d:{dist_dim}_k{top_k}_n:{norm}_d:{decay}_e:{epoch}.pth")
+        torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"psp_d:{dist_dim}_k{top_k}_n:{norm}_d:{decay}_e:{epoch}v2.pth")
         
     print(f"Validation Epochs: {val_epochs}")
     print(f"Test Epochs: {test_epochs}")
     return val_epochs, test_epochs
 
 if __name__ == "__main__":
-    dist_dim, top_k, norm, decay = "k", 5, "ln", 0
+    dist_dim, top_k, norm, decay = "k", 5, "ln", 1e-6
     if len(sys.argv) > 1:
-        print("Parsing arguments (data_dim | k | norm | weight decay)")
+        print("Parsing arguments (data_dim)")
         dist_dim = sys.argv[1]
-        top_k = int(sys.argv[2])
-        norm = sys.argv[3]
-        decay = float(sys.argv[4])
+        # top_k = int(sys.argv[2])
+        # norm = sys.argv[3]
+        # decay = float(sys.argv[4])
     print(f"Running with arguments: dist:{dist_dim}, k:{top_k}, norm:{norm}, decay:{decay}")
     model_conv = PSPNetContext(pspnet_weights="exp/ade20k/pspnet50/model/train_epoch_100.pth", top_k=top_k, dist_dim=dist_dim, norm=norm).to("cuda")
     val_hist_conv = main(model_conv, dist_dim, top_k, decay)
