@@ -73,9 +73,9 @@ def train(train_loader, model, optimizer, epoch):
         context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
         context_target = context_target[0] # only care single scale
 
-        segmentation, main_loss, seg_losses, class_losses, hint_losses = model(input, [seg_target, context_target])
-        main_loss, seg_losses, class_losses, hint_losses = torch.mean(main_loss), torch.mean(seg_losses), torch.mean(class_losses), torch.mean(hint_losses)
-        loss = main_loss + (0.3 * seg_losses) + (0.3 * class_losses) + (1e-3 * hint_losses)
+        segmentation, main_loss, seg_losses, class_losses = model(input, [seg_target, context_target])
+        main_loss, seg_losses, class_losses = torch.mean(main_loss), torch.mean(seg_losses), torch.mean(class_losses)
+        loss = main_loss + (0.3 * seg_losses) + (0.3 * class_losses)
         
         optimizer.zero_grad()
         loss.backward()
@@ -93,12 +93,13 @@ def train(train_loader, model, optimizer, epoch):
         loss_meter.update(loss.item(), n)
         aux_loss_meter.update(seg_losses.item(), n)
         class_loss_meter.update(class_losses.item(), n)
-        hint_loss_meter.update(hint_losses.item(), n)
+        # hint_loss_meter.update(hint_losses.item(), n)
         batch_time.update(time.time() - end)
         end = time.time()
 
         current_iter = epoch * len(train_loader) + i + 1
-        current_lr = poly_learning_rate(1e-2, current_iter, 100, power=0.9)
+        current_lr = poly_learning_rate(1e-2, current_iter, max_iter, power=0.9)
+        print("Reducing LR to:", current_lr)
         N_NEW_MODULES = 6
         for index in range(0, N_NEW_MODULES):
             optimizer.param_groups[index]['lr'] = current_lr * 10
