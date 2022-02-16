@@ -78,7 +78,7 @@ def validate(model, data_list=valid_list):
         context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
         context_target = context_target[0]  # only look at global scale for now
 
-        output = model(input)
+        output = model(input, distribution=context_target)
 
         # baseline model
         output = output.max(1)[1]
@@ -117,6 +117,6 @@ def main(model):
     return test_epochs
 
 if __name__ == "__main__":
-    model = UperNet(backbone="resnet").to("cuda")
+    model = UPerNet(backbone="swin").to("cuda")
     result = main(model)
     print(result)

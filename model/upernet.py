@@ -1,25 +1,140 @@
 from distutils.command.config import config
+from multiprocessing import pool
 from mmseg.apis import inference_segmentor, init_segmentor
 import mmcv
 import torch
 from torch import nn
 import torch.nn.functional as F
 from mmseg.ops import resize
+from zmq import PROTOCOL_ERROR_ZMTP_CRYPTOGRAPHIC
 
 resnet_config = "exp/ade20k/upernet50/model/config.py"
 resnet_checkpoint = "exp/ade20k/upernet50/model/upernet_r50.pth"
 swin_config = "exp/ade20k/upernet_swin/model/config.py"
 swin_checkpoint = "exp/ade20k/upernet_swin/model/upernet_swin_t.pth"
 
-class UperNet(nn.Module):
+def categorical_cross_entropy(y_pred, y_true, weights=None, smooth=0):
+    """CCE Loss w/Weighting+Smoothing Support"""
+    y_pred = torch.clamp(y_pred, 1e-9, 1 - 1e-9)
+    ce = None
+    if smooth > 0:
+        uniform = torch.ones_like(y_true) / 150
+        true_mask = 1.0 * (y_true > 0)
+        uniform *= true_mask
+        uniform /= uniform.sum(axis=1, keepdims=True)
+        y_true = y_true + (smooth * uniform)
+        y_true = y_true / y_true.sum(axis=1, keepdims=True)
+    if weights is not None:
+        ce = -(weights * (y_true * torch.log(y_pred))).sum(dim=1)
+    else: 
+        ce = -(y_true * torch.log(y_pred)).sum(dim=1)
+    return ce.mean()
+
+def earth_mover_distance(y_pred, y_true):
+    """EMD Loss"""
+    cdf_pred = torch.cumsum(y_pred, dim=1)
+    cdf_true = torch.cumsum(y_true, dim=1)
+    # correct for when no label in image, 0-sum distribution
+    valid_mask = torch.sum(y_true, dim=1, keepdim=True)  
+    cdf_pred = cdf_pred * valid_mask
+    return torch.mean(torch.square(cdf_pred - cdf_true))
+
+class DistributionCorrection(nn.Module):
+    def __init__(self, top_k=5):
+        super(DistributionCorrection, self).__init__()
+        self.top_k = top_k
+    
+    def forward(self, logits, distribution):
+        """
+        logits - NUM_CLASS channel logits
+        distribution - image-level class distribution (NxCx1x1) tensor
+        """
+        # with ground truth or learned distribution
+        softmax = nn.Softmax(dim=1)(logits)
+        softmax_distribution = nn.AdaptiveAvgPool2d((1, 1))(softmax)
+        top_k, ind = torch.topk(softmax_distribution, dim=1, k=self.top_k, largest=True, sorted=True)
+        top_k_threshold = torch.min(top_k, dim=1, keepdim=True)[0]
+        top_k_mask = torch.where(softmax_distribution > top_k_threshold, torch.ones_like(softmax_distribution), torch.zeros_like(softmax_distribution))
+        
+        dist_residual = distribution - softmax_distribution
+        dist_residual = dist_residual * top_k_mask  # mask out updates for classes outside top k
+        corrected_distribution = softmax + dist_residual
+
+        return corrected_distribution
+
+class DistributionMatch(nn.Module):
+    """
+    Given a distribution of how pixels should be assigned to each class in the image
+    Correct the distribution of logits such that the distributions are equal
+    """
+    def __init__(self, top_k=5, init_weights=None):
+        """
+        correction_mode: one of 'softmax' or 'logits', indicating which should be set equal to the class pixel distribution
+        top_k: how many classes in target distribution
+        dist_dim: one of 'all' or 'k', whether or not the prediction head is a softmax over num_classes or k
+        norm: one of 'bn', 'ln' or None, indicating if BatchNorm/LayerNorm should be used for penultimate layers
+        """
+        super(DistributionMatch, self).__init__()
+        self.top_k = top_k
+
+        self.layer1 = nn.Conv2d(512, 150, kernel_size=1, bias=True)
+        if init_weights is not None:
+            self.layer1.weight.data = init_weights
+
+
+    def forward(self, pre_cls, logits, distribution=None, label=None):
+        """
+        pre_cls - 512 channel pre-cls feature map
+        logits - NUM_CLASS channel logits
+        distribution - image-level class distribution (NxCx1x1) tensor
+        label - distribution label for computing loss
+        """
+        # with ground truth or learned distribution
+        softmax = nn.Softmax(dim=1)(logits)
+        softmax_distribution = nn.AdaptiveAvgPool2d((1, 1))(softmax)
+        top_k, ind = torch.topk(softmax_distribution, dim=1, k=self.top_k, largest=True, sorted=True)
+        top_k_threshold = torch.min(top_k, dim=1, keepdim=True)[0]
+        top_k_mask = torch.where(softmax_distribution > top_k_threshold, torch.ones_like(softmax_distribution), torch.zeros_like(softmax_distribution))
+        
+        k_distribution = None
+        loss = None
+
+        if distribution is None:
+            x = nn.AdaptiveAvgPool2d((1,1))(pre_cls)
+            x = self.layer1(x)
+            x = nn.Sigmoid()(x)
+
+            x = logits * x
+            distribution = nn.Softmax(dim=1)(logits)
+
+            # convert to top-k distribution
+            distribution = distribution * top_k_mask
+            distribution = distribution / distribution.sum(dim=1, keepdims=True)
+            k_distribution, _ = torch.topk(distribution, dim=1, k=self.top_k, largest=True, sorted=True)
+
+            # compute loss
+            label = label * top_k_mask  # GT distribution of top_k predicted classes
+            label = label / (label.sum(dim=1, keepdims=True) + 1e-12)  # renormalize so that relative distribution among k sums to 1
+            k_label, _ = torch.topk(label, dim=1, k=self.top_k, largest=True, sorted=True)
+
+            loss = earth_mover_distance(k_distribution, k_label) # + categorical_cross_entropy(distribution, label)
+
+        dist_residual = distribution - softmax_distribution
+        dist_residual = dist_residual * top_k_mask  # mask out updates for classes outside top k
+        corrected_distribution = softmax + dist_residual # if self.correction_mode == "softmax" else logits + dist_residual_upsample
+
+        return corrected_distribution, loss
+
+class UPerNet(nn.Module):
     def __init__(self, backbone="resnet"):
-        super(UperNet, self).__init__()
+        super(UPerNet, self).__init__()
         assert backbone in ["resnet", "swin"]
         config = resnet_config if backbone == "resnet" else swin_config
         checkpoint = resnet_checkpoint if backbone == "resnet" else swin_checkpoint
         self.model = init_segmentor(config, checkpoint, device='cuda:0')
         self.backbone = self.model.backbone
         self.decode_head = self.model.decode_head
+        self.dist_head = DistributionMatch(top_k=5, init_weights=self.decode_head.conv_seg.weight.data)
 
     def upernet_forward(self, inputs):
         inputs = self.decode_head._transform_inputs(inputs)
@@ -61,16 +176,23 @@ class UperNet(nn.Module):
         logits = self.decode_head.cls_seg(pre_cls)
         return pre_cls, logits
 
-    def forward(self, x, y=None):
-        h, w = x.size()[2:]
-        x = self.backbone(x)  # list of tensors from stage1..4
-        pre_cls, logits = self.upernet_forward(x)
-        logits = F.interpolate(logits, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
-        return logits        
+    def forward(self, x, y=None, learn_dist=True, distribution=None, k=5):
+        self.backbone.eval()
+        self.decode_head.eval()
+        loss = None
+        h, w = x.size()[2:] 
+        x = self.backbone(x)
+        pre_cls, output = self.upernet_forward(x) # pre logit features and logits
+        output = F.interpolate(output, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
+        if learn_dist:
+            output, loss = self.dist_head(pre_cls, output, label=y[1])
+        if not learn_dist and distribution is not None:
+            output = DistributionCorrection(k)(output, distribution) # GT dist
+        return output, loss   
 
 
 if __name__ == "__main__":
     x = torch.rand(size=(8, 3, 512, 512)).cuda()
-    model = UperNet(backbone="swin")
+    model = UPerNet(backbone="swin")
     pred = model.forward(x)
     print("hello")

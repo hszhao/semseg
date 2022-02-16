@@ -75,9 +75,7 @@ class DistributionMatch(nn.Module):
         # with ground truth or learned distribution
         softmax = nn.Softmax(dim=1)(logits)
         softmax_distribution = nn.AdaptiveAvgPool2d((1, 1))(softmax)
-        mask = torch.zeros_like(softmax_distribution)
         top_k, ind = torch.topk(softmax_distribution, dim=1, k=self.top_k, largest=True, sorted=True)
-        k_onehot = torch.mean(torch.transpose(nn.functional.one_hot(ind, num_classes=150), 1, -1).float(), dim=-1, keepdims=True).squeeze(-1)
         top_k_threshold = torch.min(top_k, dim=1, keepdim=True)[0]
         top_k_mask = torch.where(softmax_distribution > top_k_threshold, torch.ones_like(softmax_distribution), torch.zeros_like(softmax_distribution))
         
@@ -108,7 +106,6 @@ class DistributionMatch(nn.Module):
 
         dist_residual = distribution - softmax_distribution
         dist_residual = dist_residual * top_k_mask  # mask out updates for classes outside top k
-        # dist_residual_upsample = F.interpolate(dist_residual, size=softmax.size()[2:], mode="nearest")
         corrected_distribution = softmax + dist_residual # if self.correction_mode == "softmax" else logits + dist_residual_upsample
 
         return corrected_distribution, loss
