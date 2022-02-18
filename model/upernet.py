@@ -46,6 +46,7 @@ class FiLM(nn.Module):
         """
         super(FiLM, self).__init__()
         self.num_layers = num_layers
+        assert num_layers in [1, 2]
         self.layer1 = nn.Conv2d(150, 512*2, kernel_size=1, bias=True)
         self.layer2 = nn.Conv2d(512*2, 512*2, kernel_size=1, bias=True)
 
@@ -63,6 +64,36 @@ class FiLM(nn.Module):
         film_features = (pre_cls * film_scale) + film_bias
         film_features = nn.ReLU()(film_features)
         return film_features
+
+class ContextHead(nn.Module):
+    def __init__(self, num_layers=1):
+        """
+        num_layers: number of layers for context embedding before FiLM combination
+        """
+        super(ContextHead, self).__init__()
+        self.num_layers = num_layers
+        assert num_layers in [1, 2]
+        layer1_out = 150 if num_layers == 1 else 512
+        self.layer1 = nn.Conv2d(512, layer1_out, kernel_size=1, bias=True)
+        self.layer2 = nn.Conv2d(layer1_out, 150, kernel_size=1, bias=True)
+
+    def forward(self, pre_cls):
+        """
+        pre_cls - 512 channel feature map
+        """
+        x = pre_cls
+        if self.num_layers == 1:
+            x = nn.AdaptiveAvgPool2d((1,1))(x)
+            x = self.layer1(x)
+            x = nn.Sigmoid()(x)
+            return x
+        else:
+            x = self.layer1(x)
+            x = nn.ReLU()(x)
+            x = nn.AdaptiveAvgPool2d((1,1))(x)
+            x = self.layer2(x)
+            x = nn.Sigmoid()(x)
+            return x
 
 class DistributionCorrection(nn.Module):
     def __init__(self, top_k=5):
@@ -163,7 +194,7 @@ class DistributionMatch(nn.Module):
         return corrected_distribution, loss
 
 class UPerNet(nn.Module):
-    def __init__(self, backbone="resnet", gt_dist=False, film=False, film_layers=1, k=5):
+    def __init__(self, backbone="resnet", gt_dist=False, film=False, learn_context=False, context_layers=1, film_layers=1, k=5):
         super(UPerNet, self).__init__()
         assert backbone in ["resnet", "swin"]
         config = resnet_config if backbone == "resnet" else swin_config
@@ -173,6 +204,8 @@ class UPerNet(nn.Module):
         self.decode_head = self.model.decode_head
         self.dist_head = DistributionMatch(top_k=k, init_weights=self.decode_head.conv_seg.weight.data)
         self.film_head = FiLM(num_layers=film_layers)
+        self.context_head = ContextHead(num_layers=context_layers)
+        self.learn_context=learn_context
         self.gt_dist = gt_dist
         self.film = film
         self.seg_loss = nn.CrossEntropyLoss(ignore_index=255)
@@ -221,7 +254,7 @@ class UPerNet(nn.Module):
     def forward(self, x, y=None, context=None):
         self.backbone.eval()
         self.decode_head.eval()
-        loss = None
+        loss = 0
         h, w = x.size()[2:] 
         x = self.backbone(x)
         pre_cls, x = self.upernet_forward(x) # pre logit features and logits
@@ -230,14 +263,25 @@ class UPerNet(nn.Module):
         #     x = F.interpolate(x, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
         #     x, loss = self.dist_head(pre_cls, x, label=y[1])
 
-        # LEARNED DISTRIBUTION / CLASSIFICATION
+        # LEARNED CONTEXT
+        if self.learn_context and not self.film:
+            context_pred = self.context_head(pre_cls)
+            context_loss = categorical_cross_entropy(context_pred, context)
+
+            # return if only training for classification
+            if not self.film:
+                return context_pred, context_loss
+
+            # otherwise use learned context for film
+            else:
+                context = context_pred
 
         # LEARNED FILM ADJUSTMENT WITH DISTRIBUTION / CLASSIFICATION
         if self.film and context is not None:
             pre_cls = self.film_head(pre_cls, context)
             x = self.decode_head.cls_seg(pre_cls) 
             x = F.interpolate(x, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
-            loss = self.seg_loss(x, y)
+            loss = loss + self.seg_loss(x, y)
             return x, loss
 
         # PARAMETER FREE CORRECTION WITH GT_DISTRIBUTION
