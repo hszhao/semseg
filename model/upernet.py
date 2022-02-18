@@ -45,7 +45,10 @@ class FiLM(nn.Module):
         num_layers: number of layers for context embedding before FiLM combination
         """
         super(FiLM, self).__init__()
+        self.num_layers = num_layers
         self.layer1 = nn.Conv2d(150, 512*2, kernel_size=1, bias=True)
+        self.layer2 = nn.Conv2d(512*2, 512*2, kernel_size=1, bias=True)
+
     
     def forward(self, pre_cls, context):
         """
@@ -53,6 +56,9 @@ class FiLM(nn.Module):
         context - NUM_CLASS x 1 x 1 context vector (either classification or distribution)
         """
         context_embedding = self.layer1(context)
+        if self.num_layers > 1:
+            context_embedding = nn.ReLU()(context_embedding)
+            context_embedding = self.layer2(context_embedding)
         film_scale, film_bias = torch.split(context_embedding, [512, 512], dim=1)
         film_features = (pre_cls * film_scale) + film_bias
         film_features = nn.ReLU()(film_features)
@@ -157,7 +163,7 @@ class DistributionMatch(nn.Module):
         return corrected_distribution, loss
 
 class UPerNet(nn.Module):
-    def __init__(self, backbone="resnet", gt_dist=False, film=False, k=5):
+    def __init__(self, backbone="resnet", gt_dist=False, film=False, film_layers=1, k=5):
         super(UPerNet, self).__init__()
         assert backbone in ["resnet", "swin"]
         config = resnet_config if backbone == "resnet" else swin_config
@@ -166,7 +172,7 @@ class UPerNet(nn.Module):
         self.backbone = self.model.backbone
         self.decode_head = self.model.decode_head
         self.dist_head = DistributionMatch(top_k=k, init_weights=self.decode_head.conv_seg.weight.data)
-        self.film_head = FiLM(num_layers=1)
+        self.film_head = FiLM(num_layers=film_layers)
         self.gt_dist = gt_dist
         self.film = film
         self.seg_loss = nn.CrossEntropyLoss(ignore_index=255)

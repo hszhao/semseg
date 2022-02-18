@@ -142,7 +142,7 @@ def validate(model, data_list=valid_list):
     ious = np.asarray(ious).mean(axis=1)
     ious2 = np.asarray(ious2).mean(axis=1)
     improvement = ious2 - ious
-    
+
 
     return np.round(mIoU, 4), np.round(mAcc, 4), np.round(allAcc, 4)
 

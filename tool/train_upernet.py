@@ -196,7 +196,7 @@ def validate(model, data_list=valid_list):
 def main(model, decay=1e-5):
     # define optimizer
     learning_rate = 5e-3
-    modules_new = [model.dist_head.layer1]
+    modules_new = [model.film_head.layer1, model.film_head.layer2]
     params_list = []
     for module in modules_new:
         params_list.append(dict(params=module.parameters(), lr=learning_rate))
@@ -239,6 +239,8 @@ def main(model, decay=1e-5):
     return val_epochs, test_epochs
 
 if __name__ == "__main__":
-    model_conv = UPerNet(backbone="swin", film=True).to("cuda")
+    film_layers = 1 if len(sys.argv) < 2 else int(sys.argv[1])
+    print(f"Training with {film_layers} film layers")
+    model_conv = UPerNet(backbone="swin", film=True, film_layers=int(sys.argv[1])).to("cuda")
     val_hist_conv = main(model_conv)
     print(val_hist_conv)  # print val results again
