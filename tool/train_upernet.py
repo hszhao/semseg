@@ -46,8 +46,8 @@ data_root = "dataset/ade20k"
 train_list = "dataset/ade20k/list/training_alt.txt"
 valid_list = "dataset/ade20k/list/validation_alt.txt"
 test_list = "dataset/ade20k/list/validation.txt"
-batch_size = 16
-epochs = 5
+batch_size = 8
+epochs = 3
 n_classes = 150
 
 def train(train_loader, model, optimizer, epoch):
@@ -72,7 +72,7 @@ def train(train_loader, model, optimizer, epoch):
         context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
         context_target = context_target[0] # only care single scale
 
-        segmentation, loss = model(input, [seg_target, context_target])
+        segmentation, loss = model(input, y=seg_target, context=context_target)
         loss = torch.mean(loss)
 
         optimizer.zero_grad()
@@ -141,7 +141,7 @@ def validate(model, data_list=valid_list):
         transform.Crop([512, 512], crop_type='center', padding=mean, ignore_label=255),
         transform.ToTensor(),
         transform.Normalize(mean=mean, std=std)])
-    val_data = dataset.SemData(split='val', data_root=data_root, data_list=data_list, transform=val_transform, context_x=False, context_y=True, context_type="distribution")
+    val_data = dataset.SemData(split='val', data_root=data_root, data_list=data_list, transform=val_transform, context_x=False, context_y=True, context_type="classification")
     val_loader = torch.utils.data.DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True, sampler=None)
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -164,7 +164,7 @@ def validate(model, data_list=valid_list):
         context_target = [ct.float().cuda(non_blocking=True) for ct in context_target]
         context_target = context_target[0]  # only look at global scale for now
 
-        output, loss = model(input, [seg_target, context_target])
+        output, loss = model(input, y=seg_target, context=context_target)
 
         n = input.size(0)
         loss_meter.update(loss.item(), n)
@@ -212,7 +212,7 @@ def main(model, decay=1e-5):
         transform.Normalize(mean=mean, std=std)
     ])
 
-    train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, context_x=False, context_y=True, context_type="distribution")
+    train_data = dataset.SemData(split='train', data_root=data_root, data_list=train_list, transform=train_transform, context_x=False, context_y=True, context_type="classification")
     train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True, sampler=None, drop_last=True)
 
     train_epochs = [ ]
@@ -239,6 +239,6 @@ def main(model, decay=1e-5):
     return val_epochs, test_epochs
 
 if __name__ == "__main__":
-    model_conv = UPerNet(backbone="swin").to("cuda")
+    model_conv = UPerNet(backbone="swin", film=True).to("cuda")
     val_hist_conv = main(model_conv)
     print(val_hist_conv)  # print val results again

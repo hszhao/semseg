@@ -55,6 +55,7 @@ class FiLM(nn.Module):
         context_embedding = self.layer1(context)
         film_scale, film_bias = torch.split(context_embedding, [512, 512], dim=1)
         film_features = (pre_cls * film_scale) + film_bias
+        film_features = nn.ReLU()(film_features)
         return film_features
 
 class DistributionCorrection(nn.Module):
