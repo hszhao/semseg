@@ -6,7 +6,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from mmseg.ops import resize
-from zmq import PROTOCOL_ERROR_ZMTP_CRYPTOGRAPHIC
 
 resnet_config = "exp/ade20k/upernet50/model/config.py"
 resnet_checkpoint = "exp/ade20k/upernet50/model/upernet_r50.pth"
