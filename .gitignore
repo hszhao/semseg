@@ -77,3 +77,5 @@ dataset/
 *.yaml
 slurm*
 initmodel
+uper_samples/*
+*.npy

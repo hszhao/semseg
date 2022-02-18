@@ -39,6 +39,24 @@ def earth_mover_distance(y_pred, y_true):
     cdf_pred = cdf_pred * valid_mask
     return torch.mean(torch.square(cdf_pred - cdf_true))
 
+class FiLM(nn.Module):
+    def __init__(self, num_layers=1):
+        """
+        num_layers: number of layers for context embedding before FiLM combination
+        """
+        super(FiLM, self).__init__()
+        self.layer1 = nn.Conv2d(150, 512*2, kernel_size=1, bias=True)
+    
+    def forward(self, pre_cls, context):
+        """
+        pre_cls - 512 channel feature map
+        context - NUM_CLASS x 1 x 1 context vector (either classification or distribution)
+        """
+        context_embedding = self.layer1(context)
+        film_scale, film_bias = torch.split(context_embedding, [512, 512], dim=1)
+        film_features = (pre_cls * film_scale) + film_bias
+        return film_features
+
 class DistributionCorrection(nn.Module):
     def __init__(self, top_k=5):
         super(DistributionCorrection, self).__init__()
@@ -56,11 +74,23 @@ class DistributionCorrection(nn.Module):
         top_k_threshold = torch.min(top_k, dim=1, keepdim=True)[0]
         top_k_mask = torch.where(softmax_distribution > top_k_threshold, torch.ones_like(softmax_distribution), torch.zeros_like(softmax_distribution))
         
+        k_softmax = softmax_distribution * top_k_mask
+        k_softmax = k_softmax / k_softmax.sum(dim=1, keepdims=True)
+        k_softmax, _ = torch.topk(k_softmax, dim=1, k=self.top_k, largest=True, sorted=True)
+        
         dist_residual = distribution - softmax_distribution
         dist_residual = dist_residual * top_k_mask  # mask out updates for classes outside top k
         corrected_distribution = softmax + dist_residual
 
-        return corrected_distribution
+        k_softmax_alt = nn.AdaptiveAvgPool2d((1,1))(corrected_distribution) * top_k_mask
+        k_softmax_alt = k_softmax_alt / k_softmax_alt.sum(dim=1, keepdims=True)
+        k_softmax_alt, _ = torch.topk(k_softmax_alt, dim=1, k=self.top_k, largest=True, sorted=True)
+
+        label = distribution * top_k_mask  # GT distribution of top_k predicted classes
+        label = label / (label.sum(dim=1, keepdims=True) + 1e-12)  # renormalize so that relative distribution among k sums to 1
+        k_label, _ = torch.topk(label, dim=1, k=self.top_k, largest=True, sorted=True)
+
+        return corrected_distribution, k_label, k_softmax, k_softmax_alt
 
 class DistributionMatch(nn.Module):
     """
@@ -126,7 +156,7 @@ class DistributionMatch(nn.Module):
         return corrected_distribution, loss
 
 class UPerNet(nn.Module):
-    def __init__(self, backbone="resnet"):
+    def __init__(self, backbone="resnet", gt_dist=False, film=False, k=5):
         super(UPerNet, self).__init__()
         assert backbone in ["resnet", "swin"]
         config = resnet_config if backbone == "resnet" else swin_config
@@ -134,7 +164,12 @@ class UPerNet(nn.Module):
         self.model = init_segmentor(config, checkpoint, device='cuda:0')
         self.backbone = self.model.backbone
         self.decode_head = self.model.decode_head
-        self.dist_head = DistributionMatch(top_k=5, init_weights=self.decode_head.conv_seg.weight.data)
+        self.dist_head = DistributionMatch(top_k=k, init_weights=self.decode_head.conv_seg.weight.data)
+        self.film_head = FiLM(num_layers=1)
+        self.gt_dist = gt_dist
+        self.film = film
+        self.seg_loss = nn.CrossEntropyLoss(ignore_index=255)
+        self.k = k
 
     def upernet_forward(self, inputs):
         inputs = self.decode_head._transform_inputs(inputs)
@@ -176,19 +211,34 @@ class UPerNet(nn.Module):
         logits = self.decode_head.cls_seg(pre_cls)
         return pre_cls, logits
 
-    def forward(self, x, y=None, learn_dist=True, distribution=None, k=5):
+    def forward(self, x, y=None, context=None):
         self.backbone.eval()
         self.decode_head.eval()
         loss = None
         h, w = x.size()[2:] 
         x = self.backbone(x)
-        pre_cls, output = self.upernet_forward(x) # pre logit features and logits
-        output = F.interpolate(output, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
-        if learn_dist:
-            output, loss = self.dist_head(pre_cls, output, label=y[1])
-        if not learn_dist and distribution is not None:
-            output = DistributionCorrection(k)(output, distribution) # GT dist
-        return output, loss   
+        pre_cls, x = self.upernet_forward(x) # pre logit features and logits
+        
+        # if self.learn_dist:
+        #     x = F.interpolate(x, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
+        #     x, loss = self.dist_head(pre_cls, x, label=y[1])
+
+        # LEARNED DISTRIBUTION / CLASSIFICATION
+
+        # LEARNED FILM ADJUSTMENT WITH DISTRIBUTION / CLASSIFICATION
+        if self.film and context is not None:
+            pre_cls = self.film_head(pre_cls, context)
+            x = self.decode_head.cls_seg(pre_cls) 
+            x = F.interpolate(x, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
+            loss = self.seg_loss(x, y)
+            return x, loss
+
+        # PARAMETER FREE CORRECTION WITH GT_DISTRIBUTION
+        if self.gt_dist and context is not None:
+            x, k_label, k_softmax, k_softmax_alt = DistributionCorrection(self.k)(x, context)
+            return x, k_label, k_softmax, k_softmax_alt
+        
+        return x, loss   
 
 
 if __name__ == "__main__":
