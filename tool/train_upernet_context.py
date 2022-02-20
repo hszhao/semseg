@@ -47,7 +47,7 @@ train_list = "dataset/ade20k/list/training_alt.txt"
 valid_list = "dataset/ade20k/list/validation_alt.txt"
 test_list = "dataset/ade20k/list/validation.txt"
 batch_size = 8
-epochs = 3
+epochs = 25
 n_classes = 150
 
 def mean_auc(classification_labels, classification_predictions):
@@ -116,12 +116,10 @@ def train(train_loader, model, optimizer, epoch):
         end = time.time()
 
         current_iter = epoch * len(train_loader) + i + 1
-        # current_lr = poly_learning_rate(1e-2, current_iter, max_iter, power=0.9)
-        # NEW_MODULES = 7
-        # for index in range(0, NEW_MODULES):
-        #     optimizer.param_groups[index]['lr'] = current_lr * 10
-        # for index in range(NEW_MODULES, len(optimizer.param_groups)):
-        #     optimizer.param_groups[index]['lr'] = current_lr * 10
+        current_lr = poly_learning_rate(5e-3, current_iter, max_iter, power=0.9)
+        print(f"Reducing LR to {current_lr}")
+        for index in range(0, len(optimizer.param_groups)):
+            optimizer.param_groups[index]['lr'] = current_lr
         remain_iter = max_iter - current_iter
         remain_time = remain_iter * batch_time.avg
         t_m, t_s = divmod(remain_time, 60)
@@ -194,10 +192,10 @@ def validate(model, data_list=valid_list):
 
     return loss_meter.avg, np.round(mauc, 4)
 
-def main(model, decay=1e-5):
+def main(model, decay=1e-4):
     # define optimizer
     learning_rate = 5e-3
-    modules_new = [model.context_head.layer1, model.context_head.layer2]
+    modules_new = [model.context_head.layer1, model.context_head.norm1, model.context_head.layer2]
     params_list = []
     for module in modules_new:
         params_list.append(dict(params=module.parameters(), lr=learning_rate))
@@ -231,15 +229,17 @@ def main(model, decay=1e-5):
         test_loss, test_auc = validate(model, data_list=test_list)
         print(f">>> TEST SCORE FOR EPOCH {epoch}: {np.round(test_auc, 4)}, loss: {test_loss}")
         test_epochs.append((test_loss, test_auc))
-        torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, f"upernet_swin_classification_{epoch}.pth")
+        save_path = f"upernet_swin_classification_{epoch}_v2-l2.pth"
+        print(f"Saving to {save_path}")
+        torch.save({'state_dict': model.state_dict(), 'optimizer': optimizer.state_dict()}, save_path)
         
-    print(f"Validation Epochs: {val_epochs}")
+    print(f"Validation Epochs: {val_epochs}\n")
     print(f"Test Epochs: {test_epochs}")
     return val_epochs, test_epochs
 
+
 if __name__ == "__main__":
     film_layers = 1 if len(sys.argv) < 2 else int(sys.argv[1])
-    print(f"Training with {film_layers} film layers")
-    model_conv = UPerNet(backbone="swin", film=False, context_layers=1, learn_context=True).to("cuda")
+    print(f"Training with {film_layers} new layers")
+    model_conv = UPerNet(backbone="swin", film=False, context_layers=2, learn_context=True).to("cuda")
     val_hist_conv = main(model_conv)
-    print(val_hist_conv)  # print val results again

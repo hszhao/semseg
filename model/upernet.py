@@ -1,5 +1,6 @@
 from distutils.command.config import config
 from multiprocessing import pool
+from tkinter.tix import Tree
 from mmseg.apis import inference_segmentor, init_segmentor
 import mmcv
 import torch
@@ -46,7 +47,8 @@ class FiLM(nn.Module):
         super(FiLM, self).__init__()
         self.num_layers = num_layers
         assert num_layers in [1, 2]
-        self.layer1 = nn.Conv2d(150, 512*2, kernel_size=1, bias=True)
+        self.layer1 = nn.Conv2d(150, 512*2, kernel_size=1, bias=True if num_layers == 1 else 2)
+        self.norm1 = nn.LayerNorm([1024, 1, 1])
         self.layer2 = nn.Conv2d(512*2, 512*2, kernel_size=1, bias=True)
 
     
@@ -73,7 +75,8 @@ class ContextHead(nn.Module):
         self.num_layers = num_layers
         assert num_layers in [1, 2]
         layer1_out = 150 if num_layers == 1 else 512
-        self.layer1 = nn.Conv2d(512, layer1_out, kernel_size=1, bias=True)
+        self.layer1 = nn.Conv2d(512, layer1_out, kernel_size=1, bias=True if num_layers == 1 else 2)
+        self.norm1 = nn.LayerNorm([512, 128, 128])
         self.layer2 = nn.Conv2d(layer1_out, 150, kernel_size=1, bias=True)
 
     def forward(self, pre_cls):
@@ -88,6 +91,7 @@ class ContextHead(nn.Module):
             return x
         else:
             x = self.layer1(x)
+            x = self.norm1(x)
             x = nn.ReLU()(x)
             x = nn.AdaptiveAvgPool2d((1,1))(x)
             x = self.layer2(x)
@@ -193,7 +197,7 @@ class DistributionMatch(nn.Module):
         return corrected_distribution, loss
 
 class UPerNet(nn.Module):
-    def __init__(self, backbone="resnet", gt_dist=False, film=False, learn_context=False, context_layers=1, film_layers=1, k=5):
+    def __init__(self, backbone="resnet", init_weights=None, gt_dist=False, film=False, learn_context=False, context_layers=1, film_layers=1, k=5):
         super(UPerNet, self).__init__()
         assert backbone in ["resnet", "swin"]
         config = resnet_config if backbone == "resnet" else swin_config
@@ -209,6 +213,10 @@ class UPerNet(nn.Module):
         self.film = film
         self.seg_loss = nn.CrossEntropyLoss(ignore_index=255)
         self.k = k
+
+        if init_weights is not None:
+            checkpoint = torch.load(init_weights)["state_dict"]
+            self.load_state_dict(checkpoint, strict=False)
 
     def upernet_forward(self, inputs):
         inputs = self.decode_head._transform_inputs(inputs)
@@ -257,13 +265,9 @@ class UPerNet(nn.Module):
         h, w = x.size()[2:] 
         x = self.backbone(x)
         pre_cls, x = self.upernet_forward(x) # pre logit features and logits
-        
-        # if self.learn_dist:
-        #     x = F.interpolate(x, size=(h,w), mode="bilinear", align_corners=self.decode_head.align_corners)
-        #     x, loss = self.dist_head(pre_cls, x, label=y[1])
 
         # LEARNED CONTEXT
-        if self.learn_context and not self.film:
+        if self.learn_context:
             context_pred = self.context_head(pre_cls)
             context_loss = categorical_cross_entropy(context_pred, context)
 
@@ -293,6 +297,6 @@ class UPerNet(nn.Module):
 
 if __name__ == "__main__":
     x = torch.rand(size=(8, 3, 512, 512)).cuda()
-    model = UPerNet(backbone="swin")
+    model = UPerNet(backbone="swin", init_weights="upernet_swin_classification_9_v2.pth")
     pred = model.forward(x)
     print("hello")
