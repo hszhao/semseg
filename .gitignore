@@ -53,6 +53,10 @@
 # OSX dir files
 .DS_Store
 
+# Dataset files
+*.xml
+*.mat
+
 # personal
 *.log
 *.pth
@@ -60,12 +64,14 @@
 exp/
 summary/
 __pycache__/
-# data/
+data/
 back/
 *.png
 *.jpg
+*.jpeg
 *.log
 *.pth
+*.txt
 events*
 config/
 dataset/

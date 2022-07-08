@@ -30,9 +30,13 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
    git clone https://github.com/hszhao/semseg.git
    ```
 
-4. Train:
+4. Get the dataset:
 
-   - Download related datasets and symlink the paths to them as follows (you can alternatively modify the relevant paths specified in folder `config`):
+   - Download and augment the datasets as mentioned in [this repository](https://github.com/segcv/PSPNet/blob/master/Train.md).
+
+5. Train:
+
+   - Modify the relevant paths specified in folder `config`):
 
      ```
      cd semseg
@@ -53,7 +57,7 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
      sbatch tool/train.sh ade20k pspnet50
      ```
 
-5. Test:
+6. Test:
 
    - Download trained segmentation models and put them under folder specified in config or modify the specified paths.
 
@@ -69,13 +73,13 @@ This repository is a PyTorch implementation for semantic segmentation / scene pa
      PYTHONPATH=./ python tool/demo.py --config=config/ade20k/ade20k_pspnet50.yaml --image=figure/demo/ADE_val_00001515.jpg TEST.scales '[1.0]'
      ```
 
-6. Visualization: [tensorboardX](https://github.com/lanpa/tensorboardX) incorporated for better visualization.
+7. Visualization: [tensorboardX](https://github.com/lanpa/tensorboardX) incorporated for better visualization.
 
    ```shell
    tensorboard --logdir=exp/ade20k
    ```
 
-7. Other:
+Other:
 
    - Resources: GoogleDrive [LINK](https://drive.google.com/open?id=15wx9vOM0euyizq-M1uINgN0_wjVRf9J3) contains shared models, visual predictions and data lists.
    - Models: ImageNet pre-trained models and trained segmentation models can be accessed. Note that our ImageNet pretrained models are slightly different from original [ResNet](https://github.com/pytorch/vision/blob/master/torchvision/models/resnet.py) implementation in the beginning part.

@@ -26,8 +26,8 @@ cv2.setNumThreads(0)
 
 def get_parser():
     parser = argparse.ArgumentParser(description='PyTorch Semantic Segmentation')
-    parser.add_argument('--config', type=str, default='config/ade20k/ade20k_pspnet50.yaml', help='config file')
-    parser.add_argument('opts', help='see config/ade20k/ade20k_pspnet50.yaml for all options', default=None, nargs=argparse.REMAINDER)
+    parser.add_argument('--config', type=str, default='config/voc2012/voc2012_unet50.yaml', help='config file')
+    parser.add_argument('opts', help='see config/voc2012/voc2012_unet50.yaml for all options', default=None, nargs=argparse.REMAINDER)
     args = parser.parse_args()
     assert args.config is not None
     cfg = config.load_cfg_from_cfg_file(args.config)
@@ -75,6 +75,9 @@ def check(args):
                         args.mask_h <= 2 * ((args.train_h - 1) // (8 * args.shrink_factor) + 1) - 1)
                 assert (args.mask_w % 2 == 1) and (args.mask_w >= 3) and (
                         args.mask_w <= 2 * ((args.train_h - 1) // (8 * args.shrink_factor) + 1) - 1)
+    elif args.arch == 'unet':
+        assert (args.train_h) % 8 == 0 and (args.train_w) % 8 == 0
+        print("::::::::::::::::::   Using UNet   ::::::::::::::::::")
     else:
         raise Exception('architecture not supported yet'.format(args.arch))
 
@@ -131,9 +134,17 @@ def main_worker(gpu, ngpus_per_node, argss):
                        normalization_factor=args.normalization_factor, psa_softmax=args.psa_softmax, criterion=criterion)
         modules_ori = [model.layer0, model.layer1, model.layer2, model.layer3, model.layer4]
         modules_new = [model.psa, model.cls, model.aux]
+    elif args.arch == 'unet':
+        from model.unet import UNet
+        model = UNet(num_classes=args.classes, in_dim=3, conv_dim=64, criterion=criterion)
+        modules_ori=[model.enc1, model.enc2, model.enc3, model.enc4, model.dec1, model.dec2, model.dec3, model.dec4]
+        modules_new=[model.last]
     params_list = []
     for module in modules_ori:
-        params_list.append(dict(params=module.parameters(), lr=args.base_lr))
+        if args.arch=='unet':
+            params_list.append(dict(params=module.parameters(), lr=args.base_lr*10))
+        else:
+            params_list.append(dict(params=module.parameters(), lr=args.base_lr))
     for module in modules_new:
         params_list.append(dict(params=module.parameters(), lr=args.base_lr * 10))
     args.index_split = 5
@@ -150,7 +161,7 @@ def main_worker(gpu, ngpus_per_node, argss):
         logger.info("Classes: {}".format(args.classes))
         logger.info(model)
     if args.distributed:
-        torch.cuda.set_device(gpu)
+        #torch.cuda.set_device(gpu)
         args.batch_size = int(args.batch_size / ngpus_per_node)
         args.batch_size_val = int(args.batch_size_val / ngpus_per_node)
         args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
@@ -266,10 +277,19 @@ def train(train_loader, model, optimizer, epoch):
             target = F.interpolate(target.unsqueeze(1).float(), size=(h, w), mode='bilinear', align_corners=True).squeeze(1).long()
         input = input.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
-        output, main_loss, aux_loss = model(input, target)
-        if not args.multiprocessing_distributed:
-            main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
-        loss = main_loss + args.aux_weight * aux_loss
+        if args.arch=='unet':
+            output = model(input)
+            loss = model.module.criterion(output, target)
+            output = torch.argmax(output, dim=1)
+            aux_loss=torch.zeros(1)
+            if not args.multiprocessing_distributed:
+                loss, aux_loss = torch.mean(loss), torch.mean(aux_loss)
+            main_loss=loss
+        else:
+            output, main_loss, aux_loss = model(input, target)
+            if not args.multiprocessing_distributed:
+                main_loss, aux_loss = torch.mean(main_loss), torch.mean(aux_loss)
+            loss = main_loss + args.aux_weight * aux_loss
 
         optimizer.zero_grad()
         loss.backward()

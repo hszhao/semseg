@@ -64,7 +64,7 @@ class Normalize(object):
 class Resize(object):
     # Resize the input to the given size, 'size' is a 2-element tuple or list in the order of (h, w).
     def __init__(self, size):
-        assert (isinstance(size, collections.Iterable) and len(size) == 2)
+        assert (isinstance(size, collections.abc.Iterable) and len(size) == 2)
         self.size = size
 
     def __call__(self, image, label):
@@ -76,8 +76,8 @@ class Resize(object):
 class RandScale(object):
     # Randomly resize image & label with scale factor in [scale_min, scale_max]
     def __init__(self, scale, aspect_ratio=None):
-        assert (isinstance(scale, collections.Iterable) and len(scale) == 2)
-        if isinstance(scale, collections.Iterable) and len(scale) == 2 \
+        assert (isinstance(scale, collections.abc.Iterable) and len(scale) == 2)
+        if isinstance(scale, collections.abc.Iterable) and len(scale) == 2 \
                 and isinstance(scale[0], numbers.Number) and isinstance(scale[1], numbers.Number) \
                 and 0 < scale[0] < scale[1]:
             self.scale = scale
@@ -85,7 +85,7 @@ class RandScale(object):
             raise (RuntimeError("segtransform.RandScale() scale param error.\n"))
         if aspect_ratio is None:
             self.aspect_ratio = aspect_ratio
-        elif isinstance(aspect_ratio, collections.Iterable) and len(aspect_ratio) == 2 \
+        elif isinstance(aspect_ratio, collections.abc.Iterable) and len(aspect_ratio) == 2 \
                 and isinstance(aspect_ratio[0], numbers.Number) and isinstance(aspect_ratio[1], numbers.Number) \
                 and 0 < aspect_ratio[0] < aspect_ratio[1]:
             self.aspect_ratio = aspect_ratio
@@ -115,7 +115,7 @@ class Crop(object):
         if isinstance(size, int):
             self.crop_h = size
             self.crop_w = size
-        elif isinstance(size, collections.Iterable) and len(size) == 2 \
+        elif isinstance(size, collections.abc.Iterable) and len(size) == 2 \
                 and isinstance(size[0], int) and isinstance(size[1], int) \
                 and size[0] > 0 and size[1] > 0:
             self.crop_h = size[0]
@@ -168,7 +168,7 @@ class Crop(object):
 class RandRotate(object):
     # Randomly rotate image & label with rotate factor in [rotate_min, rotate_max]
     def __init__(self, rotate, padding, ignore_label=255, p=0.5):
-        assert (isinstance(rotate, collections.Iterable) and len(rotate) == 2)
+        assert (isinstance(rotate, collections.abc.Iterable) and len(rotate) == 2)
         if isinstance(rotate[0], numbers.Number) and isinstance(rotate[1], numbers.Number) and rotate[0] < rotate[1]:
             self.rotate = rotate
         else:
