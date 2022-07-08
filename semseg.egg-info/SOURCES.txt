@@ -1,0 +1,7 @@
+LICENSE
+README.md
+setup.py
+semseg.egg-info/PKG-INFO
+semseg.egg-info/SOURCES.txt
+semseg.egg-info/dependency_links.txt
+semseg.egg-info/top_level.txt
