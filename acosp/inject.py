@@ -9,7 +9,9 @@ from acosp.masks.mask_layer import ChannelMaskLayer
 from acosp.masks.sigmoid_soft_top_k import SigmoidSoftTopK
 from acosp.masks.soft_top_k import SoftTopK
 from acosp.masks.sparse_conv import ChannelSparseConv
+import logging
 
+logger = logging.getLogger(__name__)
 
 class MaskingSequential(torch.nn.Sequential):
     """Light weight sequential to put the mask layer after another layer and get flops/mask information."""
@@ -55,10 +57,11 @@ def apply_to_modules(
         # nested module ==> go inside it
         apply_to_modules(module, fn, target_classes, forbidden_classes, prefix=prefix)
 
-        instance_of_targets = any(isinstance(module, tp) for tp in target_classes)
-        instance_of_forbidden = forbidden_classes is not None and any(
-            isinstance(module, tp) for tp in forbidden_classes
-        )
+        # Check if module should be considered
+        instance_of_targets = isinstance(module, tuple(target_classes))
+        # Check if module should be explictly skipped
+        instance_of_forbidden = isinstance(module, tuple(forbidden_classes or {})) or getattr(module, "unprunable", False)
+
         if instance_of_targets and not instance_of_forbidden:
             # Replace module with result of function
             setattr(model, module_name, fn(module, prefix))
@@ -105,13 +108,13 @@ def soft_to_hard_k(model: torch.nn.Module) -> None:
         threshold = torch.quantile(soft_mask, q).detach().item()
 
         mask = (soft_mask >= threshold).float().detach()
-        print(f"Creating hard mask {soft_mask}->{mask}")
+        logger.debug(f"Creating hard mask {soft_mask}->{mask}")
 
         mask_layer = ChannelMaskLayer(mask)
 
         if mask.sum() != module.k:
             warnings.warn(
-                "Incorrect number of channels are masked: {mask} for {module.k} number of remaining elements."
+                f"Incorrect number of channels are masked: {mask} for {module.k} number of remaining elements."
             )
 
         return mask_layer
@@ -129,7 +132,6 @@ def hard_to_conv(model: torch.nn.Module, reinitialize: bool = False) -> None:
         mask = mask_layer.mask.detach()
         conv.weight.requires_grad = False
 
-        # print(conv.weight.shape)
 
         conv.weight *= mask[:, None, None, None]
         if conv.bias is not None:
@@ -159,7 +161,7 @@ def soft_to_channel_sparse(model: torch.nn.Module) -> None:
             threshold = torch.quantile(soft_mask, q).detach().item()
 
             mask = (soft_mask >= threshold).float().detach()
-            print(f"Creating hard mask {soft_mask}->{mask}")
+            logger.debug(f"Creating hard mask {soft_mask}->{mask}")
             if mask.sum() != mask_layer.k:
                 warnings.warn(
                     "Incorrect number of channels are masked: {mask} for {module.k} number of remaining elements."
