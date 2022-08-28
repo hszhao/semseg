@@ -1,4 +1,6 @@
-# Pytorch Implementation of Auto-Compressing Subset Pruning for Semantic Image Segmentation
+# Auto-Compressing Subset Pruning for Semantic Image Segmentation
+
+Pytorch Implementation of [Auto-Compressing Subset Pruning for Semantic Image Segmentation](https://arxiv.org/abs/2201.11103).
 
 ### Introduction
 
@@ -45,14 +47,16 @@ The current configs expect a special folder structure (but can be easily adapted
 
 ### Using ACoSP
 
-The implementation of ACoSP is encapsulated in ``/acosp`` and using it independent of all other experimentation code is
-quite straight forward.
-
+The implementation of ACoSP is encapsulated in ``/acosp``. It can be applied to CNN models, e.g.
+```python
+import torchvision
+model = torchvision.models.resnet18()
+```
+, with just a few steps:
 1. Create a pruner and adapt the model:
 
 ```python
 from acosp.pruner import SoftTopKPruner
-import acosp.inject
 
 # Create pruner object
 pruner = SoftTopKPruner(
@@ -60,20 +64,29 @@ pruner = SoftTopKPruner(
     ending_epoch=100,  # Pruning duration
     final_sparsity=0.5,  # Final sparsity
 )
+```
+
+2. Add masking layers to your model.
+```python
+# Sometimes you want to keep all channels in some of the convolution layers 
+# model.my_conv.unprunable = True
+
 # Add sigmoid soft k masks to model
 pruner.configure_model(model)
 ```
+These layers mask out a fraction (`pruner.final_sparsity`) of the channels during training.
 
-2. In your training loop update the temperature of all masking layers:
+3. In your training loop update the temperature of all masking layers:
 
 ```python
 # Update the temperature in all masking layers
 pruner.update_mask_layers(model, epoch)
 ```
 
-3. Convert the soft pruning to hard pruning when `ending_epoch` is reached:
+4. Convert the soft pruning to hard pruning when `ending_epoch` is reached:
 
 ```python
+import acosp.inject
 if epoch == pruner.ending_epoch:
     # Convert to binary channel mask
     acosp.inject.soft_to_hard_k(model)
@@ -241,7 +254,17 @@ General parameters cross different datasets are listed below:
 
 ### Citation
 
-If you find the `acosp/` code or trained models useful, please consider citing:
+If you find the paper, `acosp/` code or trained models useful, please consider citing:
+
+```
+@article{Ditschuneit2022AutoCompressingSP,
+  title={Auto-Compressing Subset Pruning for Semantic Image Segmentation},
+  author={Konstantin Ditschuneit and J. Otterbach},
+  journal={ArXiv},
+  year={2022},
+  volume={abs/2201.11103}
+}
+```
 
 
 For the general training code, please also consider referencing [hszhao/semseg](https://github.com/hszhao/semseg).
