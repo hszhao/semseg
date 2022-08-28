@@ -7,7 +7,7 @@ DATA:
 
 TRAIN:
   arch: segnet
-  sync_bn: True  # adopt syncbn or not
+  sync_bn: true  # adopt syncbn or not
   train_h: 512
   train_w: 1024
   scale_min: 0.25  # minimum random scale
@@ -33,14 +33,14 @@ TRAIN:
   save_path: /logs/exp/cityscapes/segnet_0.5/model
   weight:  # path to initial weight (default: none)
   resume:  # path to latest checkpoint (default: none)
-  evaluate: False  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
+  evaluate: false  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
   sparsity: 0.5
   starting_epoch: 0
   ending_epoch: 50
 Distributed:
   dist_url: tcp://127.0.0.1:5002
-  dist_backend: 'nccl'
-  multiprocessing_distributed: True
+  dist_backend: nccl
+  multiprocessing_distributed: true
   world_size: 1
   rank: 0
 

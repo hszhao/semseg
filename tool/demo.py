@@ -62,7 +62,7 @@ def check(args):
     elif args.arch == "segnet":
         pass
     else:
-        raise Exception("architecture not supported yet".format(args.arch))
+        raise Exception(f"architecture {args.arch} not supported yet")
 
 
 def main():
@@ -243,7 +243,7 @@ def scale_process(
             count_crop[s_h:e_h, s_w:e_w] += 1
             prediction_crop[s_h:e_h, s_w:e_w, :] += net_process(model, image_crop, mean, std)
     prediction_crop /= np.expand_dims(count_crop, 2)
-    prediction_crop = prediction_crop[pad_h_half: pad_h_half + ori_h, pad_w_half: pad_w_half + ori_w]
+    prediction_crop = prediction_crop[pad_h_half : pad_h_half + ori_h, pad_w_half : pad_w_half + ori_w]
     prediction = cv2.resize(prediction_crop, (w, h), interpolation=cv2.INTER_LINEAR)
     return prediction
 

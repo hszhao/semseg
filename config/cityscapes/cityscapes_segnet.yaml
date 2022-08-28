@@ -7,7 +7,7 @@ DATA:
 
 TRAIN:
   arch: segnet
-  sync_bn: True  # adopt syncbn or not
+  sync_bn: true  # adopt syncbn or not
   train_h: 512
   train_w: 1024
   scale_min: 0.25  # minimum random scale
@@ -17,7 +17,7 @@ TRAIN:
   zoom_factor: 8  # zoom factor for final prediction during training, be in [1, 2, 4, 8]
   ignore_label: 255
   aux_weight: 0
-  train_gpu: [0,1,2,3]
+  train_gpu: [0, 1, 2, 3]
   workers: 16  # data loader workers
   batch_size: 16  # batch size for training
   batch_size_val: 8  # batch size for validation during training, memory and speed tradeoff
@@ -33,11 +33,11 @@ TRAIN:
   save_path: /logs/exp/cityscapes/segnet/model
   weight:  # path to initial weight (default: none)
   resume:  # path to latest checkpoint (default: none)
-  evaluate: False  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
+  evaluate: false  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
 Distributed:
   dist_url: tcp://127.0.0.1:5002
-  dist_backend: 'nccl'
-  multiprocessing_distributed: True
+  dist_backend: nccl
+  multiprocessing_distributed: true
   world_size: 1
   rank: 0
 

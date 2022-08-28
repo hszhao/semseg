@@ -114,14 +114,14 @@ def main(
             imgs.append(load_data(dct[_k], titles.keys()))
             print(f"choosing {_k}")
         except KeyError as e:
-            print(f"Skipping {_k} because of missing images.")
+            print(f"Skipping {_k} because of missing images: {e}")
 
         if len(imgs) == 4:
             break
     else:
         raise ValueError("Failed to find enough images.")
 
-    fig = plot_seg_maps(imgs, titles)
+    plot_seg_maps(imgs, titles)
     plt.savefig("./segmentation_degradation.png", dpi=1024)
     # plt.show()
 

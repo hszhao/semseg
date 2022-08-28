@@ -30,5 +30,5 @@ setuptools.setup(
         "torch>=1.8.0",
         "torchvision>=0.9.0",
         "tqdm>=4.62.3",
-    ]
+    ],
 )

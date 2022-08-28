@@ -1,0 +1,40 @@
+[flake8]
+ignore =
+    # C812: Missing trailing comma. Deactivated because of incompatibility with black.
+    C812,
+    # C815 missing trailing comma in Python 3.5+. Deactivated because of incompatibility with black.
+    C815
+    # E203: Space before :. Deactivated because of incompatibility with black, see https://github.com/ambv/black#slices.
+    E203,
+    # E402: Module level import not at top of file. We sometimes need this (e.g. mparams, dataflow).
+    E402,
+    # I100: Import statements are in the wrong order. Deactivated because we often need to import `future` at the beginning
+    #       for Python2/3 compatibility.
+    I100,
+    # I201: Missing newline between import groups. Same as I100.
+    I201,
+    # W503: Handling of breaking around binary operators. Necessary because of Flake8 update in
+    #       https://github.com/merantix/core/commit/dee61ff623b2cb08d6827afcea502edb9a8f76fb
+    W503,
+    # W605: Invalid escape sequence 'x'. Necessary because of Flake8 update in
+    #       https://github.com/merantix/core/commit/dee61ff623b2cb08d6827afcea502edb9a8f76fb
+    W605,
+    # Exceptions for the type hinting plugin, flake8-annotations
+    ANN002, # Missing type annotation for *args
+    ANN003, # Missing type annotation for **kwargs
+    ANN101, # Missing type annotation for self in method
+    ANN102, # Missing type annotation for cls in classmethod
+    ANN204, # Missing return type annotation for special method, e.g. init
+    # The following is for the docstring plugin, to make it less whiny. We are happy if we have docs on all functions
+    D100, # Missing docstring in public module
+    D101, # Missing docstring in public class
+    D104, # Missing docstring in public package
+    D202, # No blank lines allowed after function docstring
+    D205, # 1 blank line required between summary line and description
+    D212, # Multi-line docstring summary should start at the first line
+    D415 # First line should end with a period, question mark, or exclamation point
+
+max_line_length = 120
+import_order_style = appnexus
+application_package_names = devtool
+docstring-convention = google

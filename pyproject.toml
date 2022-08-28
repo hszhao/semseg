@@ -1,0 +1,9 @@
+[tool.autopep8]
+max_line_length = 120
+ignore="E265,E501,E203"
+in-place = true
+recursive = true
+
+[tool.black]
+line-length = 120
+include = '\.pyi?$'

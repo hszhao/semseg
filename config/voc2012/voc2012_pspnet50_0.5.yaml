@@ -7,7 +7,7 @@ DATA:
 TRAIN:
   arch: psp
   layers: 50
-  sync_bn: True  # adopt sync_bn or not
+  sync_bn: true  # adopt sync_bn or not
   train_h: 473
   train_w: 473
   scale_min: 0.5  # minimum random scale
@@ -17,7 +17,7 @@ TRAIN:
   zoom_factor: 8  # zoom factor for final prediction during training, be in [1, 2, 4, 8]
   ignore_label: 255
   aux_weight: 0.4
-  train_gpu: [ 0 ]
+  train_gpu: [0]
   workers: 4  # data loader workers
   batch_size: 16  # batch size for training
   batch_size_val: 8  # batch size for validation during training, memory and speed tradeoff
@@ -33,11 +33,11 @@ TRAIN:
   save_path: /logs/exp/voc2012/pspnet50_0.5/model
   weight:  # path to initial weight (default: none)
   resume:  # path to latest checkpoint (default: none)
-  evaluate: False  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
+  evaluate: false  # evaluate on validation set, extra gpu memory needed and small batch_size_val is recommend
 Distributed:
   dist_url: tcp://127.0.0.1:6789
-  dist_backend: 'nccl'
-  multiprocessing_distributed: True
+  dist_backend: nccl
+  multiprocessing_distributed: true
   world_size: 1
   rank: 0
   sparsity: 0.5
@@ -50,11 +50,11 @@ TEST:
   base_size: 512  # based size for scaling
   test_h: 473
   test_w: 473
-  scales: [ 1.0 ]  # evaluation scales, ms as [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
+  scales: [1.0]    # evaluation scales, ms as [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
   has_prediction: false # has prediction already or not
   index_start: 0  # evaluation start index in list
   index_step: 0  # evaluation step index in list, 0 means to end
-  test_gpu: [ 0 ]
+  test_gpu: [0]
   model_path: /logs/exp/voc2012/pspnet50_0.5/model/train_epoch_50.pth  # evaluation model path
   save_folder: /logs/exp/voc2012/pspnet50_0.5/result/epoch_50/val/ss  # results save folder
   colors_path: /semseg/data/voc2012/voc2012_colors.txt  # path of dataset colors

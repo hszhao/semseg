@@ -89,7 +89,7 @@ def check(args):
     elif args.arch == "segnet":
         pass
     else:
-        raise Exception("architecture not supported yet".format(args.arch))
+        raise Exception(f"architecture {args.arch} not supported yet")
 
 
 def main():

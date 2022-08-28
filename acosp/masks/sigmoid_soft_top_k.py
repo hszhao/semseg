@@ -42,7 +42,7 @@ def sigmoid_soft_top_k(
 
 
 class SigmoidSoftTopK(SoftTopK):
-    def __init__(self, k: int, num_channels: int,*args, **kwargs) -> None:
+    def __init__(self, k: int, num_channels: int, *args, **kwargs) -> None:
         """Initialize sigmoid based soft top k masking layer.
 
         Args:

@@ -13,6 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class MaskingSequential(torch.nn.Sequential):
     """Light weight sequential to put the mask layer after another layer and get flops/mask information."""
 
@@ -60,7 +61,9 @@ def apply_to_modules(
         # Check if module should be considered
         instance_of_targets = isinstance(module, tuple(target_classes))
         # Check if module should be explictly skipped
-        instance_of_forbidden = isinstance(module, tuple(forbidden_classes or {})) or getattr(module, "unprunable", False)
+        instance_of_forbidden = isinstance(module, tuple(forbidden_classes or {})) or getattr(
+            module, "unprunable", False
+        )
 
         if instance_of_targets and not instance_of_forbidden:
             # Replace module with result of function
@@ -131,7 +134,6 @@ def hard_to_conv(model: torch.nn.Module, reinitialize: bool = False) -> None:
 
         mask = mask_layer.mask.detach()
         conv.weight.requires_grad = False
-
 
         conv.weight *= mask[:, None, None, None]
         if conv.bias is not None:

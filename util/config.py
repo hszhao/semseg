@@ -153,9 +153,3 @@ def _check_and_coerce_cfg_value_type(replacement, original, key, full_key):
         "Type mismatch ({} vs. {}) with values ({} vs. {}) for config "
         "key: {}".format(original_type, replacement_type, original, replacement, full_key)
     )
-
-
-def _assert_with_logging(cond, msg):
-    if not cond:
-        logger.debug(msg)
-    assert cond, msg
